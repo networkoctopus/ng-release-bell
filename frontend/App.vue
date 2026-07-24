@@ -87,6 +87,14 @@
               <Checkbox v-model="editProjectDialog.excludeUpdated" :binary="true" inputId="excludeUpdated"/>
               <label for="excludeUpdated" class="checkbox-label">Exclude updated/overridden releases from notifications</label>
             </div>
+            <div class="form-field form-checkbox-field">
+              <Checkbox v-model="editProjectDialog.latestVersionOnly" :binary="true" inputId="latestVersionOnly"/>
+              <label for="latestVersionOnly" class="checkbox-label">Include latest version only</label>
+            </div>
+            <div class="info-note">
+              <i class="pi pi-info-circle" style="color: var(--text-color-secondary, #999); margin-right: 4px;"></i>
+              <small>Only notify releases sharing the highest semantic version (e.g. 34.0.2). Older patches that are repushed alongside a new release are suppressed. Only works for semver-compatible packages (X.Y.Z).</small>
+            </div>
 
             <div class="form-field">
               <label>Version Filters</label>
@@ -340,6 +348,7 @@ export default {
         emailFrequency: 'instant',
         excludePrereleases: false,
         excludeUpdated: false,
+        latestVersionOnly: false,
         versionFilters: [],
         releases: [],
         syncBusy: false,
@@ -398,11 +407,12 @@ export default {
     filteredReleasesPreview() {
       const filters = this.editProjectDialog.versionFilters;
       const excludePrereleases = this.editProjectDialog.excludePrereleases;
+      const latestVersionOnly = this.editProjectDialog.latestVersionOnly;
       const hasFilters = filters && filters.some(f => f.value && f.value.trim());
       const includes = filters ? filters.filter(f => f.inverse === true && f.value && f.value.trim()) : [];
       const excludes = filters ? filters.filter(f => f.inverse === false && f.value && f.value.trim()) : [];
 
-      return this.editProjectDialog.releases.map(release => {
+      const prelim = this.editProjectDialog.releases.map(release => {
         let excluded = false;
 
         if (excludePrereleases && release.prerelease) {
@@ -432,6 +442,29 @@ export default {
 
         return { ...release, _excluded: excluded };
       });
+
+      if (latestVersionOnly) {
+        let maxCore = null;
+        const semverRe = /^(?:v)?(\d+)\.(\d+)\.(\d+)/;
+        for (const r of prelim) {
+          if (r._excluded) continue;
+          const m = r.version && r.version.match(semverRe);
+          if (!m) continue;
+          const core = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+          if (!maxCore || core[0] !== maxCore[0] ? core[0] - maxCore[0] : (core[1] !== maxCore[1] ? core[1] - maxCore[1] : core[2] - maxCore[2]) > 0) maxCore = core;
+        }
+        if (maxCore) {
+          for (const r of prelim) {
+            if (r._excluded) continue;
+            const m = r.version && r.version.match(semverRe);
+            if (!m) { r._excluded = true; continue; }
+            const core = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+            if (core[0] !== maxCore[0] || core[1] !== maxCore[1] || core[2] !== maxCore[2]) r._excluded = true;
+          }
+        }
+      }
+
+      return prelim;
     },
   },
   methods: {
@@ -595,6 +628,7 @@ export default {
       this.editProjectDialog.emailFrequency = project.emailFrequency || 'instant';
       this.editProjectDialog.excludePrereleases = !!project.excludePrereleases;
       this.editProjectDialog.excludeUpdated = !!project.excludeUpdated;
+      this.editProjectDialog.latestVersionOnly = !!project.latestVersionOnly;
       this.editProjectDialog.versionFilters = project.versionFilters ? (typeof project.versionFilters === 'string' ? JSON.parse(project.versionFilters) : project.versionFilters) : [];
       this.editProjectDialog.releases = [];
       this.editProjectDialog.error = '';
@@ -628,6 +662,7 @@ export default {
         emailFrequency: this.editProjectDialog.emailFrequency,
         excludePrereleases: this.editProjectDialog.excludePrereleases,
         excludeUpdated: this.editProjectDialog.excludeUpdated,
+        latestVersionOnly: this.editProjectDialog.latestVersionOnly,
         versionFilters: JSON.stringify(this.editProjectDialog.versionFilters),
       };
 

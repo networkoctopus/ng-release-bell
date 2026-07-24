@@ -78,6 +78,7 @@ function projectPostprocess(p) {
     if (p.enabled !== undefined) p.enabled = !!p.enabled;
     if (p.excludePrereleases !== undefined) p.excludePrereleases = !!p.excludePrereleases;
     if (p.excludeUpdated !== undefined) p.excludeUpdated = !!p.excludeUpdated;
+    if (p.latestVersionOnly !== undefined) p.latestVersionOnly = !!p.latestVersionOnly;
     if (p.githubAutoImport !== undefined) p.githubAutoImport = !!p.githubAutoImport;
     return p;
 }
@@ -109,11 +110,12 @@ function projectsList(userId) {
 
     result.forEach(projectPostprocess);
 
-    const { releasePassesDisplayFilters } = require('./regex-validator.js');
+    const { releasePassesDisplayFilters, filterLatestVersionOnly } = require('./regex-validator.js');
     for (const project of result) {
         const releases = db.prepare('SELECT version, createdAt, prerelease FROM releases WHERE projectId=? ORDER BY createdAt DESC').all(project.id);
 
-        const filtered = releases.filter(r => releasePassesDisplayFilters(r, project));
+        let filtered = releases.filter(r => releasePassesDisplayFilters(r, project));
+        if (project.latestVersionOnly) filtered = filterLatestVersionOnly(filtered);
 
         project.version = filtered.length > 0 ? filtered[0].version : null;
         project.createdAt = filtered.length > 0 ? filtered[0].createdAt : null;
@@ -137,11 +139,12 @@ function projectsListByType(userId, type) {
 
     result.forEach(projectPostprocess);
 
-    const { releasePassesDisplayFilters } = require('./regex-validator.js');
+    const { releasePassesDisplayFilters, filterLatestVersionOnly } = require('./regex-validator.js');
     for (const project of result) {
         const releases = db.prepare('SELECT version, createdAt, prerelease FROM releases WHERE projectId=? ORDER BY createdAt DESC').all(project.id);
 
-        const filtered = releases.filter(r => releasePassesDisplayFilters(r, project));
+        let filtered = releases.filter(r => releasePassesDisplayFilters(r, project));
+        if (project.latestVersionOnly) filtered = filterLatestVersionOnly(filtered);
 
         project.version = filtered.length > 0 ? filtered[0].version : null;
         project.createdAt = filtered.length > 0 ? filtered[0].createdAt : null;
@@ -160,11 +163,12 @@ function projectsAdd(project) {
     project.emailFrequency = project.emailFrequency || 'instant';
     project.excludePrereleases = project.excludePrereleases || false;
     project.excludeUpdated = project.excludeUpdated || false;
+    project.latestVersionOnly = project.latestVersionOnly || false;
     project.versionFilters = project.versionFilters || null;
     project.lastNotifiedAt = 0;
 
-    db.prepare('INSERT INTO projects (id, userId, name, origin, enabled, lastSuccessfulSyncAt, type, emailFrequency, excludePrereleases, excludeUpdated, versionFilters, lastNotifiedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(project.id, project.userId, project.name, project.origin, project.enabled ? 1 : 0, project.lastSuccessfulSyncAt, project.type, project.emailFrequency, project.excludePrereleases ? 1 : 0, project.excludeUpdated ? 1 : 0, project.versionFilters, project.lastNotifiedAt);
+    db.prepare('INSERT INTO projects (id, userId, name, origin, enabled, lastSuccessfulSyncAt, type, emailFrequency, excludePrereleases, excludeUpdated, latestVersionOnly, versionFilters, lastNotifiedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(project.id, project.userId, project.name, project.origin, project.enabled ? 1 : 0, project.lastSuccessfulSyncAt, project.type, project.emailFrequency, project.excludePrereleases ? 1 : 0, project.excludeUpdated ? 1 : 0, project.latestVersionOnly ? 1 : 0, project.versionFilters, project.lastNotifiedAt);
 
     return projectPostprocess(project);
 }
@@ -182,7 +186,7 @@ function projectsUpdate(projectId, data) {
     assert.strictEqual(typeof projectId, 'string');
     assert.strictEqual(typeof data, 'object');
 
-    const allowedFields = new Set(['enabled', 'name', 'type', 'origin', 'lastSuccessfulSyncAt', 'emailFrequency', 'excludePrereleases', 'excludeUpdated', 'versionFilters', 'lastNotifiedAt']);
+    const allowedFields = new Set(['enabled', 'name', 'type', 'origin', 'lastSuccessfulSyncAt', 'emailFrequency', 'excludePrereleases', 'excludeUpdated', 'latestVersionOnly', 'versionFilters', 'lastNotifiedAt']);
     const { sets, args } = buildSetClause(data, allowedFields);
 
     if (sets.length === 0) return;
