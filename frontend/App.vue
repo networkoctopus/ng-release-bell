@@ -446,20 +446,23 @@ export default {
       if (latestVersionOnly) {
         let maxCore = null;
         const semverRe = /^(?:v)?(\d+)\.(\d+)\.(\d+)/;
+        const parseCore = (version) => {
+          const m = version && version.match(semverRe);
+          if (!m) return null;
+          return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+        };
+        const higher = (a, b) => a[0] !== b[0] ? a[0] > b[0] : (a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]);
         for (const r of prelim) {
           if (r._excluded) continue;
-          const m = r.version && r.version.match(semverRe);
-          if (!m) continue;
-          const core = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
-          if (!maxCore || core[0] !== maxCore[0] ? core[0] - maxCore[0] : (core[1] !== maxCore[1] ? core[1] - maxCore[1] : core[2] - maxCore[2]) > 0) maxCore = core;
+          const core = parseCore(r.version);
+          if (!core) continue;
+          if (!maxCore || higher(core, maxCore)) maxCore = core;
         }
         if (maxCore) {
           for (const r of prelim) {
             if (r._excluded) continue;
-            const m = r.version && r.version.match(semverRe);
-            if (!m) { r._excluded = true; continue; }
-            const core = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
-            if (core[0] !== maxCore[0] || core[1] !== maxCore[1] || core[2] !== maxCore[2]) r._excluded = true;
+            const core = parseCore(r.version);
+            if (!core || core[0] !== maxCore[0] || core[1] !== maxCore[1] || core[2] !== maxCore[2]) r._excluded = true;
           }
         }
       }
