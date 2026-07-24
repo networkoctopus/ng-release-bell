@@ -87,6 +87,14 @@
               <Checkbox v-model="editProjectDialog.excludeUpdated" :binary="true" inputId="excludeUpdated"/>
               <label for="excludeUpdated" class="checkbox-label">Exclude updated/overridden releases from notifications</label>
             </div>
+            <div class="form-field form-checkbox-field">
+              <Checkbox v-model="editProjectDialog.latestVersionOnly" :binary="true" inputId="latestVersionOnly"/>
+              <label for="latestVersionOnly" class="checkbox-label">Include latest version only</label>
+            </div>
+            <div class="info-note">
+              <i class="pi pi-info-circle" style="color: var(--text-color-secondary, #999); margin-right: 4px;"></i>
+              <small>Only notify releases sharing the highest semantic version (e.g. 34.0.2). Older patches that are repushed alongside a new release are suppressed. Only works for semver-compatible packages (X.Y.Z).</small>
+            </div>
 
             <div class="form-field">
               <label>Version Filters</label>
@@ -340,6 +348,7 @@ export default {
         emailFrequency: 'instant',
         excludePrereleases: false,
         excludeUpdated: false,
+        latestVersionOnly: false,
         versionFilters: [],
         releases: [],
         syncBusy: false,
@@ -389,7 +398,7 @@ export default {
       if (!t) return 'https://...';
       if (t.type === 'npm') return 'express';
       if (t.type === 'pypi') return 'requests';
-      if (t.type === 'dockerhub') return 'library/nginx';
+      if (t.type === 'dockerhub') return 'nginx';
       if (t.type === 'quay') return 'prometheus/node-exporter';
       if (t.type === 'ghcr') return 'owner/repo';
       if (t.type === 'sourceforge') return 'sevenzip';
@@ -398,11 +407,12 @@ export default {
     filteredReleasesPreview() {
       const filters = this.editProjectDialog.versionFilters;
       const excludePrereleases = this.editProjectDialog.excludePrereleases;
+      const latestVersionOnly = this.editProjectDialog.latestVersionOnly;
       const hasFilters = filters && filters.some(f => f.value && f.value.trim());
       const includes = filters ? filters.filter(f => f.inverse === true && f.value && f.value.trim()) : [];
       const excludes = filters ? filters.filter(f => f.inverse === false && f.value && f.value.trim()) : [];
 
-      return this.editProjectDialog.releases.map(release => {
+      const prelim = this.editProjectDialog.releases.map(release => {
         let excluded = false;
 
         if (excludePrereleases && release.prerelease) {
@@ -432,6 +442,32 @@ export default {
 
         return { ...release, _excluded: excluded };
       });
+
+      if (latestVersionOnly) {
+        let maxCore = null;
+        const semverRe = /^(?:v)?(\d+)\.(\d+)\.(\d+)/;
+        const parseCore = (version) => {
+          const m = version && version.match(semverRe);
+          if (!m) return null;
+          return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+        };
+        const higher = (a, b) => a[0] !== b[0] ? a[0] > b[0] : (a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]);
+        for (const r of prelim) {
+          if (r._excluded) continue;
+          const core = parseCore(r.version);
+          if (!core) continue;
+          if (!maxCore || higher(core, maxCore)) maxCore = core;
+        }
+        if (maxCore) {
+          for (const r of prelim) {
+            if (r._excluded) continue;
+            const core = parseCore(r.version);
+            if (!core || core[0] !== maxCore[0] || core[1] !== maxCore[1] || core[2] !== maxCore[2]) r._excluded = true;
+          }
+        }
+      }
+
+      return prelim;
     },
   },
   methods: {
@@ -450,7 +486,7 @@ export default {
       if (project.type === 'gitea') return `${project.origin}/${project.name}`;
       if (project.type === 'npm') return `https://www.npmjs.com/package/${project.name}`;
       if (project.type === 'pypi') return `https://pypi.org/project/${project.name}/`;
-      if (project.type === 'dockerhub') return `https://hub.docker.com/r/${project.name}`;
+      if (project.type === 'dockerhub') return project.name.indexOf('/') === -1 ? `https://hub.docker.com/_/${project.name}` : `https://hub.docker.com/r/${project.name}`;
       if (project.type === 'quay') return `https://quay.io/repository/${project.name}`;
       if (project.type === 'ghcr') return `https://github.com/${project.name.split('/')[0]}?tab=packages`;
       if (project.type === 'sourceforge') return `https://sourceforge.net/projects/${project.name}/`;
@@ -463,7 +499,7 @@ export default {
       if (project.type === 'gitea') return `${project.origin}/${project.name}/releases/tag/${project.version}`;
       if (project.type === 'npm') return `https://www.npmjs.com/package/${project.name}/v/${project.version}`;
       if (project.type === 'pypi') return `https://pypi.org/project/${project.name}/${project.version}/`;
-      if (project.type === 'dockerhub') return `https://hub.docker.com/r/${project.name}/tags?name=${project.version}`;
+      if (project.type === 'dockerhub') return project.name.indexOf('/') === -1 ? `https://hub.docker.com/_/${project.name}/tags?name=${project.version}` : `https://hub.docker.com/r/${project.name}/tags?name=${project.version}`;
       if (project.type === 'quay') return `https://quay.io/repository/${project.name}`;
       if (project.type === 'sourceforge') return `https://sourceforge.net/projects/${project.name}/files/${project.version}/`;
       return '#';
@@ -595,6 +631,7 @@ export default {
       this.editProjectDialog.emailFrequency = project.emailFrequency || 'instant';
       this.editProjectDialog.excludePrereleases = !!project.excludePrereleases;
       this.editProjectDialog.excludeUpdated = !!project.excludeUpdated;
+      this.editProjectDialog.latestVersionOnly = !!project.latestVersionOnly;
       this.editProjectDialog.versionFilters = project.versionFilters ? (typeof project.versionFilters === 'string' ? JSON.parse(project.versionFilters) : project.versionFilters) : [];
       this.editProjectDialog.releases = [];
       this.editProjectDialog.error = '';
@@ -628,6 +665,7 @@ export default {
         emailFrequency: this.editProjectDialog.emailFrequency,
         excludePrereleases: this.editProjectDialog.excludePrereleases,
         excludeUpdated: this.editProjectDialog.excludeUpdated,
+        latestVersionOnly: this.editProjectDialog.latestVersionOnly,
         versionFilters: JSON.stringify(this.editProjectDialog.versionFilters),
       };
 

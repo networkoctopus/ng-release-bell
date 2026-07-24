@@ -10,11 +10,17 @@ module.exports = exports = {
 
 const MAX_TAGS = 50;
 
+function toApiName(name) {
+    assert.strictEqual(typeof name, 'string');
+    return name.indexOf('/') === -1 ? `library/${name}` : name;
+}
+
 async function getReleases(token, project) {
     assert.strictEqual(typeof project, 'object');
 
+    const apiName = toApiName(project.name);
     let allTags = [];
-    let url = `https://hub.docker.com/v2/repositories/${project.name}/tags?page_size=100&ordering=last_updated`;
+    let url = `https://hub.docker.com/v2/repositories/${apiName}/tags?page_size=100&ordering=last_updated`;
 
     while (url && allTags.length < MAX_TAGS) {
         let result;

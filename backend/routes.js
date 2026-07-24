@@ -390,6 +390,7 @@ async function dataExport(req, res, next) {
             emailFrequency: p.emailFrequency,
             excludePrereleases: p.excludePrereleases,
             excludeUpdated: p.excludeUpdated,
+            latestVersionOnly: p.latestVersionOnly,
             versionFilters: p.versionFilters,
         }))
     };
@@ -422,6 +423,7 @@ async function dataImport(req, res, next) {
                 emailFrequency: p.emailFrequency || 'instant',
                 excludePrereleases: p.excludePrereleases || false,
                 excludeUpdated: p.excludeUpdated || false,
+                latestVersionOnly: p.latestVersionOnly || false,
                 versionFilters: p.versionFilters || null,
             });
             importedProjects.push(project);

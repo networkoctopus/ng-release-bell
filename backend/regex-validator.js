@@ -54,6 +54,43 @@ function passesVersionFilters(version, versionFilters) {
 
 const NON_SEMVER_TAGS = ['latest', 'stable', 'develop', 'main', 'master', 'edge', 'nightly'];
 
+const SEMVER_CORE_RE = /^(?:v)?(\d+)\.(\d+)\.(\d+)/;
+
+function extractSemverCore(version) {
+    if (!version || typeof version !== 'string') return null;
+    const m = version.match(SEMVER_CORE_RE);
+    if (!m) return null;
+    return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+}
+
+function compareCores(a, b) {
+    if (a[0] !== b[0]) return a[0] - b[0];
+    if (a[1] !== b[1]) return a[1] - b[1];
+    return a[2] - b[2];
+}
+
+function computeMaxSemverCore(versions) {
+    let max = null;
+    for (const v of versions) {
+        const core = extractSemverCore(v);
+        if (!core) continue;
+        if (!max || compareCores(core, max) > 0) max = core;
+    }
+    return max;
+}
+
+function isLatestVersion(version, maxCore) {
+    if (!maxCore) return false;
+    const core = extractSemverCore(version);
+    if (!core) return false;
+    return compareCores(core, maxCore) === 0;
+}
+
+function filterLatestVersionOnly(releases) {
+    const maxCore = computeMaxSemverCore(releases.map(r => r.version));
+    return releases.filter(r => isLatestVersion(r.version, maxCore));
+}
+
 function releasePassesDisplayFilters(release, project) {
     if (NON_SEMVER_TAGS.includes(release.version.toLowerCase())) return false;
     if (!passesVersionFilters(release.version, project.versionFilters)) return false;
@@ -66,5 +103,9 @@ module.exports = {
     validateVersionFilters,
     passesVersionFilters,
     releasePassesDisplayFilters,
+    extractSemverCore,
+    computeMaxSemverCore,
+    isLatestVersion,
+    filterLatestVersionOnly,
     NON_SEMVER_TAGS
 };

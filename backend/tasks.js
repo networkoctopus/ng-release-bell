@@ -13,7 +13,7 @@ const assert = require('assert'),
     quay = require('./quay.js'),
     ghcr = require('./ghcr.js'),
     sourceforge = require('./sourceforge.js'),
-    { passesVersionFilters } = require('./regex-validator.js'),
+    { passesVersionFilters, computeMaxSemverCore, isLatestVersion } = require('./regex-validator.js'),
     handlebars = require('handlebars'),
     markdown = require('helper-markdown'),
     nodemailer = require('nodemailer'),
@@ -243,6 +243,12 @@ async function syncReleasesByProject(user, project) {
 
     const isRegistry = REGISTRY_PROVIDERS.has(project.type);
 
+    const latestVersionOnlyCore = project.latestVersionOnly
+        ? computeMaxSemverCore(upstreamReleases
+            .map(r => r.version)
+            .filter(v => passesVersionFilters(v, project.versionFilters)))
+        : null;
+
     for (let release of newReleases) {
         release.notified = !project.lastSuccessfulSyncAt ? true : !project.enabled;
 
@@ -272,6 +278,10 @@ async function syncReleasesByProject(user, project) {
         }
 
         if (!passesVersionFilters(release.version, project.versionFilters)) {
+            release.notified = true;
+        }
+
+        if (latestVersionOnlyCore && !isLatestVersion(release.version, latestVersionOnlyCore)) {
             release.notified = true;
         }
 

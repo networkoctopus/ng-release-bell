@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS projects (
     emailFrequency TEXT NOT NULL DEFAULT 'instant',
     excludePrereleases INTEGER NOT NULL DEFAULT 0,
     excludeUpdated INTEGER NOT NULL DEFAULT 0,
+    latestVersionOnly INTEGER NOT NULL DEFAULT 0,
     versionFilters TEXT,
     lastNotifiedAt INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (userId) REFERENCES users(id)

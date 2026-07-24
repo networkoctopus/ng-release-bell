@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.1.0 (2026-07-24)
+
+### Features
+
+- **common:** add include latest version only option (bf7ed80)
+
+### Bug Fixes
+
+- **docker hub:** handle docker hub official images (7dbf01d)
+
+---
+
 ## v2.0.3 (2026-07-18)
 
 ### Bug Fixes
@@ -51,9 +63,5 @@
 ---
 
 ## v1.10.1 (2023-12-28)
-
----
-
-## v1.10.0 (2023-10-25)
 
 ---
