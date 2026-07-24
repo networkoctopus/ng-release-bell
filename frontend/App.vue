@@ -389,7 +389,7 @@ export default {
       if (!t) return 'https://...';
       if (t.type === 'npm') return 'express';
       if (t.type === 'pypi') return 'requests';
-      if (t.type === 'dockerhub') return 'library/nginx';
+      if (t.type === 'dockerhub') return 'nginx';
       if (t.type === 'quay') return 'prometheus/node-exporter';
       if (t.type === 'ghcr') return 'owner/repo';
       if (t.type === 'sourceforge') return 'sevenzip';
@@ -450,7 +450,7 @@ export default {
       if (project.type === 'gitea') return `${project.origin}/${project.name}`;
       if (project.type === 'npm') return `https://www.npmjs.com/package/${project.name}`;
       if (project.type === 'pypi') return `https://pypi.org/project/${project.name}/`;
-      if (project.type === 'dockerhub') return `https://hub.docker.com/r/${project.name}`;
+      if (project.type === 'dockerhub') return project.name.indexOf('/') === -1 ? `https://hub.docker.com/_/${project.name}` : `https://hub.docker.com/r/${project.name}`;
       if (project.type === 'quay') return `https://quay.io/repository/${project.name}`;
       if (project.type === 'ghcr') return `https://github.com/${project.name.split('/')[0]}?tab=packages`;
       if (project.type === 'sourceforge') return `https://sourceforge.net/projects/${project.name}/`;
@@ -463,7 +463,7 @@ export default {
       if (project.type === 'gitea') return `${project.origin}/${project.name}/releases/tag/${project.version}`;
       if (project.type === 'npm') return `https://www.npmjs.com/package/${project.name}/v/${project.version}`;
       if (project.type === 'pypi') return `https://pypi.org/project/${project.name}/${project.version}/`;
-      if (project.type === 'dockerhub') return `https://hub.docker.com/r/${project.name}/tags?name=${project.version}`;
+      if (project.type === 'dockerhub') return project.name.indexOf('/') === -1 ? `https://hub.docker.com/_/${project.name}/tags?name=${project.version}` : `https://hub.docker.com/r/${project.name}/tags?name=${project.version}`;
       if (project.type === 'quay') return `https://quay.io/repository/${project.name}`;
       if (project.type === 'sourceforge') return `https://sourceforge.net/projects/${project.name}/files/${project.version}/`;
       return '#';
