@@ -79,9 +79,10 @@
               <label for="editEmailFrequencyInput">Email Frequency</label>
               <Dropdown v-model="editProjectDialog.emailFrequency" :options="emailFrequencyOptions" optionLabel="label" optionValue="value" inputId="editEmailFrequencyInput"/>
             </div>
-            <div class="form-field form-checkbox-field">
-              <Checkbox v-model="editProjectDialog.excludePrereleases" :binary="true" inputId="excludePrereleases"/>
-              <label for="excludePrereleases" class="checkbox-label">Exclude Pre-Releases from notifications</label>
+            <div class="form-field">
+              <label for="releaseFilteringInput">Release filtering</label>
+              <Dropdown v-model="editProjectDialog.releaseFiltering" :options="projectReleaseFilteringOptions" optionLabel="label" optionValue="value" inputId="releaseFilteringInput"/>
+              <small v-if="editProjectDialog.releaseFiltering === 'inherit'">Currently: {{ user && user.defaultExcludePrereleases ? 'Stable releases only' : 'All releases, including prereleases' }}</small>
             </div>
             <div class="form-field form-checkbox-field">
               <Checkbox v-model="editProjectDialog.excludeUpdated" :binary="true" inputId="excludeUpdated"/>
@@ -174,6 +175,16 @@
               <small>When enabled, your GitHub starred repos are automatically imported as tracked projects. Disable to manage projects manually only.</small>
             </div>
             <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;"/>
+            <div class="form-field">
+              <label for="defaultReleaseFilteringInput">Default release filtering</label>
+              <Dropdown v-model="settingsDialog.defaultExcludePrereleases" :options="releaseFilteringOptions" optionLabel="label" optionValue="value" inputId="defaultReleaseFilteringInput"/>
+              <small>Applies to new projects and projects that inherit the global setting. Providers without prerelease detection keep their existing behaviour.</small>
+            </div>
+            <div class="form-field form-checkbox-field">
+              <Checkbox v-model="settingsDialog.makeProjectsInherit" :binary="true" inputId="makeProjectsInherit"/>
+              <label for="makeProjectsInherit" class="checkbox-label">Make all existing projects inherit when saving</label>
+            </div>
+            <div class="info-note"><small>This replaces every project’s explicit release filtering choice with inheritance. Other filters and notification settings are kept.</small></div>
             <div class="form-field">
               <label for="quayTokenInput">Quay Token</label>
               <InputText id="quayTokenInput" type="password" v-model="settingsDialog.quayToken" :class="{ 'p-invalid': settingsDialog.error }"/>
@@ -320,6 +331,15 @@ export default {
         { type: 'ghcr', name: 'GitHub Container Registry', group: 'Container Registry' },
         { type: 'sourceforge', name: 'SourceForge', group: 'Other' },
       ],
+      releaseFilteringOptions: [
+        { label: 'Stable releases only', value: true },
+        { label: 'All releases, including prereleases', value: false },
+      ],
+      projectReleaseFilteringOptions: [
+        { label: 'Inherit global setting', value: 'inherit' },
+        { label: 'Stable releases only', value: 'stable' },
+        { label: 'All releases, including prereleases', value: 'all' },
+      ],
       emailFrequencyOptions: [
         { label: 'Instant emails', value: 'instant' },
         { label: 'Hourly emails', value: 'hourly' },
@@ -346,7 +366,7 @@ export default {
         origin: '',
         error: '',
         emailFrequency: 'instant',
-        excludePrereleases: false,
+        releaseFiltering: 'inherit',
         excludeUpdated: false,
         latestVersionOnly: false,
         versionFilters: [],
@@ -354,6 +374,8 @@ export default {
         syncBusy: false,
       },
       settingsDialog: {
+        defaultExcludePrereleases: false,
+        makeProjectsInherit: false,
         visible: false,
         busy: false,
         error: '',
@@ -406,7 +428,8 @@ export default {
     },
     filteredReleasesPreview() {
       const filters = this.editProjectDialog.versionFilters;
-      const excludePrereleases = this.editProjectDialog.excludePrereleases;
+      const excludePrereleases = this.editProjectDialog.releaseFiltering === 'inherit'
+        ? !!(this.user && this.user.defaultExcludePrereleases) : this.editProjectDialog.releaseFiltering === 'stable';
       const latestVersionOnly = this.editProjectDialog.latestVersionOnly;
       const hasFilters = filters && filters.some(f => f.value && f.value.trim());
       const includes = filters ? filters.filter(f => f.inverse === true && f.value && f.value.trim()) : [];
@@ -629,7 +652,7 @@ export default {
       this.editProjectDialog.name = project.name;
       this.editProjectDialog.origin = project.origin || '';
       this.editProjectDialog.emailFrequency = project.emailFrequency || 'instant';
-      this.editProjectDialog.excludePrereleases = !!project.excludePrereleases;
+      this.editProjectDialog.releaseFiltering = project.inheritReleaseFiltering ? 'inherit' : (project.excludePrereleases ? 'stable' : 'all');
       this.editProjectDialog.excludeUpdated = !!project.excludeUpdated;
       this.editProjectDialog.latestVersionOnly = !!project.latestVersionOnly;
       this.editProjectDialog.versionFilters = project.versionFilters ? (typeof project.versionFilters === 'string' ? JSON.parse(project.versionFilters) : project.versionFilters) : [];
@@ -663,7 +686,8 @@ export default {
         name: this.editProjectDialog.name,
         origin: this.editProjectDialog.origin || '',
         emailFrequency: this.editProjectDialog.emailFrequency,
-        excludePrereleases: this.editProjectDialog.excludePrereleases,
+        inheritReleaseFiltering: this.editProjectDialog.releaseFiltering === 'inherit',
+        excludePrereleases: this.editProjectDialog.releaseFiltering === 'stable',
         excludeUpdated: this.editProjectDialog.excludeUpdated,
         latestVersionOnly: this.editProjectDialog.latestVersionOnly,
         versionFilters: JSON.stringify(this.editProjectDialog.versionFilters),
@@ -710,6 +734,8 @@ export default {
       });
     },
     onShowSettingsDialog() {
+      this.settingsDialog.defaultExcludePrereleases = !!this.user.defaultExcludePrereleases;
+      this.settingsDialog.makeProjectsInherit = false;
       this.settingsDialog.email = this.user.email || '';
       this.settingsDialog.githubToken = this.user.githubToken || '';
       this.settingsDialog.quayToken = this.quayToken || '';
@@ -772,7 +798,10 @@ export default {
       const currentAutoImport = this.user.githubAutoImport === true || this.user.githubAutoImport === 1;
 
       try {
-        const body = {};
+        const body = {
+          defaultExcludePrereleases: this.settingsDialog.defaultExcludePrereleases,
+          makeProjectsInherit: this.settingsDialog.makeProjectsInherit,
+        };
         if (this.settingsDialog.githubToken !== (this.user.githubToken || '')) {
           body.githubToken = this.settingsDialog.githubToken;
         }
@@ -794,6 +823,7 @@ export default {
           this.user = result.body.user;
           this.quayToken = result.body.user.quayToken || '';
           await this.loadProviders();
+          await this.refresh();
         }
         this.settingsDialog.newPassword = '';
       } catch (error) {
@@ -850,6 +880,8 @@ export default {
           const data = JSON.parse(e.target.result);
           const result = await superagent.post(`${API_ORIGIN}/api/v1/data/import`).send(data);
           this.settingsDialog.importResult = `Imported ${result.body.imported} project(s), skipped ${result.body.skipped} duplicate(s). Syncing releases...`;
+          const profile = await superagent.get(`${API_ORIGIN}/api/v1/profile`);
+          this.user = profile.body.user;
           await this.refresh();
           this.settingsDialog.importResult = `Imported ${result.body.imported} project(s), skipped ${result.body.skipped} duplicate(s). Done.`;
         } catch (error) {

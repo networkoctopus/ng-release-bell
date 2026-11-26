@@ -3,7 +3,8 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL,
     githubToken TEXT NOT NULL DEFAULT '',
     quayToken TEXT NOT NULL DEFAULT '',
-    githubAutoImport INTEGER NOT NULL DEFAULT 0
+    githubAutoImport INTEGER NOT NULL DEFAULT 0,
+    defaultExcludePrereleases INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS projects (
     origin TEXT NOT NULL DEFAULT '',
     emailFrequency TEXT NOT NULL DEFAULT 'instant',
     excludePrereleases INTEGER NOT NULL DEFAULT 0,
+    inheritReleaseFiltering INTEGER NOT NULL DEFAULT 0,
     excludeUpdated INTEGER NOT NULL DEFAULT 0,
     latestVersionOnly INTEGER NOT NULL DEFAULT 0,
     versionFilters TEXT,

@@ -41,6 +41,8 @@ No email configuration found. Set the following environment variables:
 module.exports = exports = {
     run,
     syncReleasesByProject,
+    syncGithubStarredByUser,
+    sendNotifications,
     sendTestEmail,
     CAN_SEND_EMAIL
 };
@@ -216,6 +218,8 @@ async function syncReleasesByProject(user, project) {
     assert.strictEqual(typeof user, 'object');
     assert.strictEqual(typeof project, 'object');
 
+    project = { ...project, excludePrereleases: database.projects.get(project.id).effectiveExcludePrereleases };
+
     debug(`syncReleasesByProject: [${project.name}] type ${project.type} start sync releases, notifications are ${project.enabled ? 'enabled' : 'disabled'}. Last successful sync was at`, new Date(project.lastSuccessfulSyncAt));
 
     const api = PROVIDERS[project.type];
@@ -243,13 +247,46 @@ async function syncReleasesByProject(user, project) {
 
     const isRegistry = REGISTRY_PROVIDERS.has(project.type);
 
+    // GitHub tag listings omit release metadata. Refresh known prereleases as
+    // well as new tags, so a tag promoted to stable is observed exactly once.
+    const metadata = new Map();
+    if (!isRegistry) {
+        const candidates = newReleases.concat(trackedReleases.filter(r => r.prerelease && upstreamReleases.some(u => u.version === r.version)));
+        for (const release of candidates) {
+            try {
+                metadata.set(release.version, await api.getRelease(user.githubToken, project, release.version));
+            } catch (error) {
+                console.error(`Failed to get release metadata for ${project.name} ${release.version}`, error);
+                // A failed refresh must never be mistaken for a stable promotion.
+            }
+        }
+    }
+    const eligible = release => passesVersionFilters(release.version, project.versionFilters)
+        && !(project.excludePrereleases && release.prerelease);
+    const classifiedReleases = upstreamReleases.filter(release => isRegistry || metadata.has(release.version)
+        || trackedReleases.some(r => r.version === release.version));
     const latestVersionOnlyCore = project.latestVersionOnly
-        ? computeMaxSemverCore(upstreamReleases
-            .map(r => r.version)
-            .filter(v => passesVersionFilters(v, project.versionFilters)))
+        ? computeMaxSemverCore(classifiedReleases.map(release => ({
+            ...release,
+            prerelease: metadata.has(release.version) ? metadata.get(release.version).prerelease
+                : (trackedReleases.find(r => r.version === release.version) || release).prerelease
+        })).filter(eligible).map(r => r.version))
         : null;
 
+    for (const previous of trackedReleases.filter(r => r.prerelease)) {
+        const current = metadata.get(previous.version);
+        if (!current || current.prerelease !== false) continue;
+        const createdAt = current.publishedAt ? new Date(current.publishedAt).getTime() : previous.createdAt;
+        const release = { ...previous, prerelease: false };
+        const notify = project.lastSuccessfulSyncAt && project.enabled && eligible(release)
+            && (!project.latestVersionOnly || isLatestVersion(release.version, latestVersionOnlyCore))
+            && createdAt > Date.now() - 10 * 24 * 60 * 60 * 1000;
+        await database.releases.update(previous.id, { prerelease: false, body: (current.body || previous.body).substring(0, 65000), createdAt, notified: !notify });
+    }
+
     for (let release of newReleases) {
+        // Retry on the next sync rather than record unknown metadata as stable.
+        if (!isRegistry && !metadata.has(release.version)) continue;
         release.notified = !project.lastSuccessfulSyncAt ? true : !project.enabled;
 
         if (isRegistry) {
@@ -281,7 +318,7 @@ async function syncReleasesByProject(user, project) {
             release.notified = true;
         }
 
-        if (latestVersionOnlyCore && !isLatestVersion(release.version, latestVersionOnlyCore)) {
+        if (project.latestVersionOnly && !isLatestVersion(release.version, latestVersionOnlyCore)) {
             release.notified = true;
         }
 
@@ -305,7 +342,8 @@ async function syncReleasesByProject(user, project) {
         }
 
         try {
-            const result = await api.getRelease(user.githubToken, project, release.version);
+            const result = metadata.get(release.version);
+            if (!result) throw new Error('Release metadata unavailable');
             release.body = result.body;
             release.prerelease = result.prerelease;
             if (result.publishedAt) release.createdAt = new Date(result.publishedAt).getTime() || release.createdAt;
@@ -434,6 +472,37 @@ async function sendCombinedDigestEmail(user, entries) {
     await transport.sendMail(mail);
 }
 
+async function pendingReleasesForNotification(project) {
+    const current = database.projects.get(project.id);
+    const all = database.releases.list(project.id);
+    const eligible = release => current.enabled
+        && !(current.effectiveExcludePrereleases && release.prerelease)
+        && passesVersionFilters(release.version, current.versionFilters);
+    const maxCore = current.latestVersionOnly ? computeMaxSemverCore(all.filter(eligible).map(r => r.version)) : null;
+    const pending = [];
+    for (const release of all.filter(r => !r.notified)) {
+        if (eligible(release) && (!current.latestVersionOnly || isLatestVersion(release.version, maxCore))) pending.push(release);
+        else await database.releases.update(release.id, { notified: true });
+    }
+    return pending;
+}
+
+async function sendDigestEmail(user, project, pending) {
+    if (!CAN_SEND_EMAIL) return;
+    const releases = pending.map(release => ({
+        ...release,
+        versionLink: getVersionLink(project, release.version),
+        date: release.createdAt ? new Date(release.createdAt).toLocaleDateString() : ''
+    }));
+    await buildTransport().sendMail({
+        from: process.env.MAIL_FROM,
+        to: user.email,
+        subject: `NG Release Bell Digest: ${project.name}, ${releases.length} new release(s)`,
+        text: `${project.name}: ${releases.map(r => r.version).join(', ')}`,
+        html: DIGEST_TEMPLATE({ project, releases, settingsLink: process.env.APP_ORIGIN || '' })
+    });
+}
+
 async function sendNotifications() {
     const now = Date.now();
     const startOfHour = Math.floor(now / 3600000) * 3600000;
@@ -445,7 +514,7 @@ async function sendNotifications() {
     for (const project of projects) {
         if ((project.emailFrequency || 'instant') !== 'instant') continue;
 
-        const pending = await database.releases.listPendingForProject(project.id);
+        const pending = await pendingReleasesForNotification(project);
         if (pending.length === 0) continue;
 
         for (const release of pending) {
@@ -464,7 +533,7 @@ async function sendNotifications() {
         for (const project of projects) {
             if ((project.emailFrequency || 'instant') !== 'hourly') continue;
 
-            const pending = await database.releases.listPendingForProject(project.id);
+            const pending = await pendingReleasesForNotification(project);
             if (pending.length === 0) continue;
 
             if (!byUser.has(project.userId)) byUser.set(project.userId, []);
@@ -492,7 +561,7 @@ async function sendNotifications() {
         const interval = intervals[freq];
         if (!interval) continue;
 
-        const pending = await database.releases.listPendingForProject(project.id);
+        const pending = await pendingReleasesForNotification(project);
         if (pending.length === 0) continue;
 
         if (now - (project.lastNotifiedAt || 0) < interval) continue;

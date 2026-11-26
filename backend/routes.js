@@ -195,6 +195,14 @@ function profileGet(req, res, next) {
 async function profileUpdate(req, res, next) {
     assert.strictEqual(typeof req.user, 'object');
 
+    if (req.body.defaultExcludePrereleases !== undefined && typeof req.body.defaultExcludePrereleases !== 'boolean') {
+        return next(new HttpError(400, 'defaultExcludePrereleases must be a boolean'));
+    }
+    if (req.body.makeProjectsInherit !== undefined && typeof req.body.makeProjectsInherit !== 'boolean') {
+        return next(new HttpError(400, 'makeProjectsInherit must be a boolean'));
+    }
+    const defaultExcludePrereleases = req.body.defaultExcludePrereleases !== undefined
+        ? req.body.defaultExcludePrereleases : !!req.user.defaultExcludePrereleases;
     const githubToken = req.body.githubToken !== undefined ? req.body.githubToken : req.user.githubToken;
     const quayToken = req.body.quayToken !== undefined ? req.body.quayToken : (req.user.quayToken || '');
     const githubAutoImport = req.body.githubAutoImport !== undefined ? req.body.githubAutoImport : req.user.githubAutoImport;
@@ -212,7 +220,8 @@ async function profileUpdate(req, res, next) {
     const passwordHash = (password && typeof password === 'string' && password.length > 0) ? authLib.hashPassword(password) : undefined;
 
     try {
-        await database.users.update(req.user.id, githubToken, email, quayToken, githubAutoImport, passwordHash);
+        await database.users.update(req.user.id, githubToken, email, quayToken, githubAutoImport, passwordHash, defaultExcludePrereleases);
+        if (req.body.makeProjectsInherit) await database.projects.inheritReleaseFiltering(req.user.id);
     } catch (error) {
         return next(new HttpError(500, error));
     }
@@ -220,6 +229,7 @@ async function profileUpdate(req, res, next) {
     req.user.quayToken = quayToken;
     req.user.githubAutoImport = githubAutoImport;
     req.user.email = email;
+    req.user.defaultExcludePrereleases = defaultExcludePrereleases;
 
     next(new HttpSuccess(202, {}));
 
@@ -258,6 +268,9 @@ async function projectsList(req, res, next) {
 async function projectAdd(req, res, next) {
     assert.strictEqual(typeof req.user, 'object');
 
+    if (['excludePrereleases', 'inheritReleaseFiltering'].some(field => req.body[field] !== undefined && typeof req.body[field] !== 'boolean')) {
+        return next(new HttpError(400, 'Release filtering preferences must be booleans'));
+    }
     if (!req.body.type) return next(new HttpError(400, 'type is required'));
     const ALLOWED_TYPES = [
         database.PROJECT_TYPE_GITHUB_MANUAL,
@@ -277,7 +290,9 @@ async function projectAdd(req, res, next) {
         type: req.body.type,
         userId: req.user.id,
         name: req.body.name,
-        origin: req.body.origin
+        origin: req.body.origin,
+        excludePrereleases: req.body.excludePrereleases,
+        inheritReleaseFiltering: req.body.inheritReleaseFiltering
     };
 
     let result;
@@ -315,13 +330,21 @@ async function projectsUpdate(req, res, next) {
     assert.strictEqual(typeof req.user, 'object');
     assert.strictEqual(typeof req.params.projectId, 'string');
 
+    if (['excludePrereleases', 'inheritReleaseFiltering'].some(field => req.body[field] !== undefined && typeof req.body[field] !== 'boolean')) {
+        return next(new HttpError(400, 'Release filtering preferences must be booleans'));
+    }
     if (req.body.versionFilters) {
         const result = validateVersionFilters(req.body.versionFilters);
         if (!result.valid) return next(new HttpError(400, result.error));
     }
 
     try {
-        await database.projects.update(req.params.projectId, req.body);
+        const project = await database.projects.get(req.params.projectId);
+        if (project.userId !== req.user.id) return next(new HttpError(404, 'project not found'));
+        const data = { ...req.body };
+        // Older clients send only the boolean; that is an explicit override.
+        if (data.excludePrereleases !== undefined && data.inheritReleaseFiltering === undefined) data.inheritReleaseFiltering = false;
+        await database.projects.update(req.params.projectId, data);
     } catch (error) {
         return next(new HttpError(500, error));
     }
@@ -380,7 +403,8 @@ async function dataExport(req, res, next) {
 
     const projects = await database.projects.list(req.user.id);
     const data = {
-        version: 1,
+        version: 2,
+        settings: { defaultExcludePrereleases: !!req.user.defaultExcludePrereleases },
         exportedAt: new Date().toISOString(),
         projects: projects.map(p => ({
             name: p.name,
@@ -389,6 +413,7 @@ async function dataExport(req, res, next) {
             enabled: p.enabled,
             emailFrequency: p.emailFrequency,
             excludePrereleases: p.excludePrereleases,
+            inheritReleaseFiltering: p.inheritReleaseFiltering,
             excludeUpdated: p.excludeUpdated,
             latestVersionOnly: p.latestVersionOnly,
             versionFilters: p.versionFilters,
@@ -405,10 +430,24 @@ async function dataImport(req, res, next) {
         return next(new HttpError(400, 'projects array is required'));
     }
 
+    // Version 1 has no global preference or inheritance flag: keep its explicit
+    // per-project values, including the old implicit "include all" default.
+    if (req.body.settings && req.body.settings.defaultExcludePrereleases !== undefined) {
+        if (typeof req.body.settings.defaultExcludePrereleases !== 'boolean') {
+            return next(new HttpError(400, 'defaultExcludePrereleases must be a boolean'));
+        }
+    }
+    if (req.body.projects.some(p => p && ['excludePrereleases', 'inheritReleaseFiltering'].some(field => p[field] !== undefined && typeof p[field] !== 'boolean'))) {
+        return next(new HttpError(400, 'Release filtering preferences must be booleans'));
+    }
+    if (req.body.settings && req.body.settings.defaultExcludePrereleases !== undefined) {
+        await database.users.update(req.user.id, req.user.githubToken, req.user.email, undefined, undefined, undefined, req.body.settings.defaultExcludePrereleases);
+        req.user.defaultExcludePrereleases = req.body.settings.defaultExcludePrereleases;
+    }
     let imported = 0, skipped = 0;
     const importedProjects = [];
     for (const p of req.body.projects) {
-        if (!p.name || !p.type) { skipped++; continue; }
+        if (!p || !p.name || !p.type) { skipped++; continue; }
 
         const existing = await database.projects.list(req.user.id);
         if (existing.find(e => e.name === p.name && e.type === p.type)) { skipped++; continue; }
@@ -422,6 +461,7 @@ async function dataImport(req, res, next) {
                 enabled: p.enabled !== undefined ? p.enabled : true,
                 emailFrequency: p.emailFrequency || 'instant',
                 excludePrereleases: p.excludePrereleases || false,
+                inheritReleaseFiltering: p.inheritReleaseFiltering === true,
                 excludeUpdated: p.excludeUpdated || false,
                 latestVersionOnly: p.latestVersionOnly || false,
                 versionFilters: p.versionFilters || null,
