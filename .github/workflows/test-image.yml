@@ -1,0 +1,81 @@
+name: Build fork test image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Versioned test tag prefix (a commit suffix is added)
+        required: true
+        default: test-release-filtering-v1
+        type: string
+      publish:
+        description: Publish to the fork GHCR namespace after tests pass
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.repository == 'networkoctopus/ng-release-bell'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '26'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx --no-install eslint backend index.js scripts/test-container.cjs migrations/20260724180000-add-latest-version-only.js migrations/20261126190000-add-global-release-filtering.js
+      - run: npm run build
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: ng-release-bell:smoke
+      - run: node scripts/test-container.cjs ng-release-bell:smoke
+
+  image:
+    if: github.repository == 'networkoctopus/ng-release-bell'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare versioned fork image name
+        id: image
+        env:
+          TEST_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          if [[ ! "$TEST_TAG" =~ ^test-[a-zA-Z0-9_.-]{1,100}$ ]]; then
+            echo 'Tag must start with test- and use Docker tag characters.' >&2
+            exit 1
+          fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${TEST_TAG}-${GITHUB_SHA:0:12}"
+          echo "tag=$image" >> "$GITHUB_OUTPUT"
+          echo "Image: $image" >> "$GITHUB_STEP_SUMMARY"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        if: inputs.publish
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/s390x
+          push: ${{ inputs.publish }}
+          tags: ${{ steps.image.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

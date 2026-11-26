@@ -1,0 +1,40 @@
+services:
+  ng-release-bell:
+    image: ${NG_RELEASE_BELL_TEST_IMAGE:?Set a versioned test image from the workflow output}
+    container_name: ng-release-bell-test
+    ports:
+      - "127.0.0.1:3112:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/home/nonroot/data
+      - DB_PATH=/home/nonroot/data/ng-release-bell.db
+      - ADMIN_PASSWORD=${TEST_ADMIN_PASSWORD:?Set a test-only admin password}
+      - GITHUB_TOKEN=
+      - QUAY_TOKEN=
+      - MAIL_SMTP_SERVER=
+      - MAIL_SMTP_PORT=
+      - MAIL_SMTP_USERNAME=
+      - MAIL_SMTP_PASSWORD=
+      - MAIL_FROM=
+      - APP_ORIGIN=http://localhost:3112
+    volumes:
+      - ng-release-bell-test-data:/home/nonroot/data
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e", "const h=require('http');h.get('http://localhost:3000/api/v1/status',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  ng-release-bell-test-data:
+    name: ng-release-bell-test-data
