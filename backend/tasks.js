@@ -14,6 +14,7 @@ const assert = require('assert'),
     ghcr = require('./ghcr.js'),
     sourceforge = require('./sourceforge.js'),
     { passesVersionFilters, computeMaxSemverCore, isLatestVersion } = require('./regex-validator.js'),
+    { effectiveReleaseFiltering } = require('./release-filtering.js'),
     handlebars = require('handlebars'),
     markdown = require('helper-markdown'),
     nodemailer = require('nodemailer'),
@@ -222,7 +223,7 @@ async function syncReleasesByProject(user, project) {
     assert.strictEqual(typeof user, 'object');
     assert.strictEqual(typeof project, 'object');
 
-    project = { ...project, excludePrereleases: database.projects.get(project.id).effectiveExcludePrereleases };
+    project = effectiveReleaseFiltering(database.projects.get(project.id));
 
     debug(`syncReleasesByProject: [${project.name}] type ${project.type} start sync releases, notifications are ${project.enabled ? 'enabled' : 'disabled'}. Last successful sync was at`, new Date(project.lastSuccessfulSyncAt));
 
@@ -239,15 +240,18 @@ async function syncReleasesByProject(user, project) {
     const upstreamReleases = await api.getReleases(providerToken, project);
     const trackedReleases = await database.releases.list(project.id);
 
-    let newReleases = upstreamReleases.filter(function (a) { return !trackedReleases.find(function (b) { return a.version == b.version; }); });
+    let releasesToSync = upstreamReleases.filter(release => {
+        const previous = trackedReleases.find(r => r.version === release.version);
+        return !previous || (release.sha && previous.sha && release.sha !== previous.sha);
+    });
 
-    newReleases.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    if (newReleases.length > MAX_NEW_RELEASES) {
-        console.log(`Limiting ${project.name}: found ${newReleases.length} new releases, processing only the ${MAX_NEW_RELEASES} most recent`);
-        newReleases = newReleases.slice(0, MAX_NEW_RELEASES);
+    releasesToSync.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    if (releasesToSync.length > MAX_NEW_RELEASES) {
+        console.log(`Limiting ${project.name}: found ${releasesToSync.length} new or updated releases, processing only the ${MAX_NEW_RELEASES} most recent`);
+        releasesToSync = releasesToSync.slice(0, MAX_NEW_RELEASES);
     }
 
-    debug(`syncReleasesByProject: [${project.name}] found ${newReleases.length} new releases`);
+    debug(`syncReleasesByProject: [${project.name}] found ${releasesToSync.length} new or updated releases`);
 
     const isRegistry = REGISTRY_PROVIDERS.has(project.type);
 
@@ -255,8 +259,9 @@ async function syncReleasesByProject(user, project) {
     // well as new tags, so a tag promoted to stable is observed exactly once.
     const metadata = new Map();
     if (!isRegistry) {
-        const candidates = newReleases.concat(trackedReleases.filter(r => r.prerelease && upstreamReleases.some(u => u.version === r.version)));
+        const candidates = releasesToSync.concat(trackedReleases.filter(r => r.prerelease && upstreamReleases.some(u => u.version === r.version)));
         for (const release of candidates) {
+            if (metadata.has(release.version)) continue;
             try {
                 metadata.set(release.version, await api.getRelease(user.githubToken, project, release.version));
             } catch (error) {
@@ -279,16 +284,20 @@ async function syncReleasesByProject(user, project) {
 
     for (const previous of trackedReleases.filter(r => r.prerelease)) {
         const current = metadata.get(previous.version);
-        if (!current || current.prerelease !== false) continue;
+        if (!current || current.prerelease !== false || releasesToSync.some(r => r.version === previous.version)) continue;
         const createdAt = current.publishedAt ? new Date(current.publishedAt).getTime() : previous.createdAt;
         const release = { ...previous, prerelease: false };
         const notify = project.lastSuccessfulSyncAt && project.enabled && eligible(release)
             && (!project.latestVersionOnly || isLatestVersion(release.version, latestVersionOnlyCore))
             && createdAt > Date.now() - 10 * 24 * 60 * 60 * 1000;
-        await database.releases.update(previous.id, { prerelease: false, body: (current.body || previous.body).substring(0, 65000), createdAt, notified: !notify });
+        await database.releases.update(previous.id, { prerelease: false, updated: false, body: (current.body || previous.body || '').substring(0, 65000), createdAt, notified: !notify });
     }
 
-    for (let release of newReleases) {
+    const saveRelease = release => {
+        const previous = trackedReleases.find(r => r.version === release.version);
+        return previous ? database.releases.update(previous.id, release) : database.releases.add(release);
+    };
+    for (let release of releasesToSync) {
         // Retry on the next sync rather than record unknown metadata as stable.
         if (!isRegistry && !metadata.has(release.version)) continue;
         release.notified = !project.lastSuccessfulSyncAt ? true : !project.enabled;
@@ -304,15 +313,10 @@ async function syncReleasesByProject(user, project) {
             release.prerelease = false;
         }
 
-        const existingWithSha = trackedReleases.find(b => b.version === release.version);
-        if (existingWithSha && release.sha && existingWithSha.sha && existingWithSha.sha !== release.sha) {
-            if (project.excludeUpdated) {
-                release.notified = true;
-            } else {
-                await database.releases.update(existingWithSha.id, { sha: release.sha, notified: false });
-                continue;
-            }
-        }
+        const previous = trackedReleases.find(r => r.version === release.version);
+        const promoted = previous && previous.prerelease && metadata.get(release.version)?.prerelease === false;
+        release.updated = !!previous && !promoted;
+        if (release.updated && project.excludeUpdated) release.notified = true;
 
         if (project.excludePrereleases && release.prerelease) {
             release.notified = true;
@@ -333,7 +337,7 @@ async function syncReleasesByProject(user, project) {
                 release.body = release.body.substring(0, 65000) + '...';
             }
 
-            await database.releases.add(release);
+            await saveRelease(release);
             continue;
         }
 
@@ -373,7 +377,7 @@ async function syncReleasesByProject(user, project) {
             release.body = release.body.length > 65000 ? release.body.substring(0, 65000) + '...' : release.body;
         }
 
-        await database.releases.add(release);
+        await saveRelease(release);
     }
 
     debug(`syncReleasesByProject: [${project.name}] successfully synced`);
@@ -477,15 +481,15 @@ async function sendCombinedDigestEmail(user, entries) {
 }
 
 async function pendingReleasesForNotification(project) {
-    const current = database.projects.get(project.id);
+    const current = effectiveReleaseFiltering(database.projects.get(project.id));
     const all = database.releases.list(project.id);
     const eligible = release => current.enabled
-        && !(current.effectiveExcludePrereleases && release.prerelease)
+        && !(current.excludePrereleases && release.prerelease)
         && passesVersionFilters(release.version, current.versionFilters);
     const maxCore = current.latestVersionOnly ? computeMaxSemverCore(all.filter(eligible).map(r => r.version)) : null;
     const pending = [];
     for (const release of all.filter(r => !r.notified)) {
-        if (eligible(release) && (!current.latestVersionOnly || isLatestVersion(release.version, maxCore))) pending.push(release);
+        if (eligible(release) && !(current.excludeUpdated && release.updated) && (!current.latestVersionOnly || isLatestVersion(release.version, maxCore))) pending.push(release);
         else await database.releases.update(release.id, { notified: true });
     }
     return pending;

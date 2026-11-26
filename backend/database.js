@@ -5,7 +5,8 @@ const assert = require('assert'),
     { DatabaseSync } = require('node:sqlite'),
     fs = require('fs'),
     path = require('path'),
-    { runMigrations } = require('./migrator.js');
+    { runMigrations } = require('./migrator.js'),
+    { FILTER_PREFERENCES, PROJECT_FILTER_FIELDS, effectiveReleaseFiltering } = require('./release-filtering.js');
 
 module.exports = exports = {
     init: init,
@@ -77,12 +78,13 @@ function testConnection() {
 function projectPostprocess(p) {
     if (p.lastSuccessfulSyncAt === '0000-00-00 00:00:00') p.lastSuccessfulSyncAt = 0;
     if (p.enabled !== undefined) p.enabled = !!p.enabled;
-    if (p.excludePrereleases !== undefined) p.excludePrereleases = !!p.excludePrereleases;
-    p.inheritReleaseFiltering = !!p.inheritReleaseFiltering;
-    p.effectiveExcludePrereleases = p.inheritReleaseFiltering
-        ? !!usersGet(p.userId).defaultExcludePrereleases : !!p.excludePrereleases;
-    if (p.excludeUpdated !== undefined) p.excludeUpdated = !!p.excludeUpdated;
-    if (p.latestVersionOnly !== undefined) p.latestVersionOnly = !!p.latestVersionOnly;
+    const user = FILTER_PREFERENCES.some(preference => p[preference.inheritField]) ? usersGet(p.userId) : null;
+    for (const preference of FILTER_PREFERENCES) {
+        p[preference.field] = !!p[preference.field];
+        p[preference.inheritField] = !!p[preference.inheritField];
+        p[preference.effectiveField] = p[preference.inheritField]
+            ? !!user[preference.defaultField] : p[preference.field];
+    }
     if (p.githubAutoImport !== undefined) p.githubAutoImport = !!p.githubAutoImport;
     return p;
 }
@@ -118,8 +120,8 @@ function projectsList(userId) {
     for (const project of result) {
         const releases = db.prepare('SELECT version, createdAt, prerelease FROM releases WHERE projectId=? ORDER BY createdAt DESC').all(project.id);
 
-        let filtered = releases.filter(r => releasePassesDisplayFilters(r, { ...project, excludePrereleases: project.effectiveExcludePrereleases }));
-        if (project.latestVersionOnly) filtered = filterLatestVersionOnly(filtered);
+        let filtered = releases.filter(r => releasePassesDisplayFilters(r, effectiveReleaseFiltering(project)));
+        if (project.effectiveLatestVersionOnly) filtered = filterLatestVersionOnly(filtered);
 
         project.version = filtered.length > 0 ? filtered[0].version : null;
         project.createdAt = filtered.length > 0 ? filtered[0].createdAt : null;
@@ -147,8 +149,8 @@ function projectsListByType(userId, type) {
     for (const project of result) {
         const releases = db.prepare('SELECT version, createdAt, prerelease FROM releases WHERE projectId=? ORDER BY createdAt DESC').all(project.id);
 
-        let filtered = releases.filter(r => releasePassesDisplayFilters(r, { ...project, excludePrereleases: project.effectiveExcludePrereleases }));
-        if (project.latestVersionOnly) filtered = filterLatestVersionOnly(filtered);
+        let filtered = releases.filter(r => releasePassesDisplayFilters(r, effectiveReleaseFiltering(project)));
+        if (project.effectiveLatestVersionOnly) filtered = filterLatestVersionOnly(filtered);
 
         project.version = filtered.length > 0 ? filtered[0].version : null;
         project.createdAt = filtered.length > 0 ? filtered[0].createdAt : null;
@@ -173,16 +175,16 @@ function projectsAdd(project) {
     project.lastSuccessfulSyncAt = 0;
     project.origin = project.origin || '';
     project.emailFrequency = project.emailFrequency || 'instant';
-    project.inheritReleaseFiltering = project.inheritReleaseFiltering !== undefined
-        ? !!project.inheritReleaseFiltering : project.excludePrereleases === undefined;
-    project.excludePrereleases = project.excludePrereleases || false;
-    project.excludeUpdated = project.excludeUpdated || false;
-    project.latestVersionOnly = project.latestVersionOnly || false;
+    for (const preference of FILTER_PREFERENCES) {
+        project[preference.inheritField] = project[preference.inheritField] !== undefined
+            ? !!project[preference.inheritField] : project[preference.field] === undefined;
+        project[preference.field] = !!project[preference.field];
+    }
     project.versionFilters = project.versionFilters || null;
     project.lastNotifiedAt = 0;
 
-    db.prepare('INSERT INTO projects (id, userId, name, origin, enabled, lastSuccessfulSyncAt, type, emailFrequency, excludePrereleases, inheritReleaseFiltering, excludeUpdated, latestVersionOnly, versionFilters, lastNotifiedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(project.id, project.userId, project.name, project.origin, project.enabled ? 1 : 0, project.lastSuccessfulSyncAt, project.type, project.emailFrequency, project.excludePrereleases ? 1 : 0, project.inheritReleaseFiltering ? 1 : 0, project.excludeUpdated ? 1 : 0, project.latestVersionOnly ? 1 : 0, project.versionFilters, project.lastNotifiedAt);
+    db.prepare('INSERT INTO projects (id, userId, name, origin, enabled, lastSuccessfulSyncAt, type, emailFrequency, excludePrereleases, inheritReleaseFiltering, excludeUpdated, inheritExcludeUpdated, latestVersionOnly, inheritLatestVersionOnly, versionFilters, lastNotifiedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(project.id, project.userId, project.name, project.origin, project.enabled ? 1 : 0, project.lastSuccessfulSyncAt, project.type, project.emailFrequency, project.excludePrereleases ? 1 : 0, project.inheritReleaseFiltering ? 1 : 0, project.excludeUpdated ? 1 : 0, project.inheritExcludeUpdated ? 1 : 0, project.latestVersionOnly ? 1 : 0, project.inheritLatestVersionOnly ? 1 : 0, project.versionFilters, project.lastNotifiedAt);
 
     return projectPostprocess(project);
 }
@@ -200,7 +202,7 @@ function projectsUpdate(projectId, data) {
     assert.strictEqual(typeof projectId, 'string');
     assert.strictEqual(typeof data, 'object');
 
-    const allowedFields = new Set(['enabled', 'name', 'type', 'origin', 'lastSuccessfulSyncAt', 'emailFrequency', 'excludePrereleases', 'inheritReleaseFiltering', 'excludeUpdated', 'latestVersionOnly', 'versionFilters', 'lastNotifiedAt']);
+    const allowedFields = new Set(['enabled', 'name', 'type', 'origin', 'lastSuccessfulSyncAt', 'emailFrequency', ...PROJECT_FILTER_FIELDS, 'versionFilters', 'lastNotifiedAt']);
     const { sets, args } = buildSetClause(data, allowedFields);
 
     if (sets.length === 0) return;
@@ -211,7 +213,7 @@ function projectsUpdate(projectId, data) {
 
 function projectsInheritReleaseFiltering(userId) {
     assert.strictEqual(typeof userId, 'string');
-    db.prepare('UPDATE projects SET inheritReleaseFiltering=1 WHERE userId=?').run(userId);
+    db.prepare('UPDATE projects SET inheritReleaseFiltering=1, inheritExcludeUpdated=1, inheritLatestVersionOnly=1 WHERE userId=?').run(userId);
 }
 
 function projectsRemove(projectId) {
@@ -248,7 +250,7 @@ function usersGet(userId) {
     return result;
 }
 
-function usersUpdate(userId, githubToken, email, quayToken, githubAutoImport, passwordHash, defaultExcludePrereleases) {
+function usersUpdate(userId, githubToken, email, quayToken, githubAutoImport, passwordHash, defaultExcludePrereleases, defaultExcludeUpdated, defaultLatestVersionOnly) {
     assert.strictEqual(typeof userId, 'string');
     assert.strictEqual(typeof githubToken, 'string');
     assert.strictEqual(typeof email, 'string');
@@ -258,7 +260,10 @@ function usersUpdate(userId, githubToken, email, quayToken, githubAutoImport, pa
 
     if (quayToken !== undefined) { fields.push('quayToken=?'); args.push(quayToken); }
     if (githubAutoImport !== undefined) { fields.push('githubAutoImport=?'); args.push(githubAutoImport ? 1 : 0); }
-    if (defaultExcludePrereleases !== undefined) { fields.push('defaultExcludePrereleases=?'); args.push(defaultExcludePrereleases ? 1 : 0); }
+    const defaults = { defaultExcludePrereleases, defaultExcludeUpdated, defaultLatestVersionOnly };
+    for (const { defaultField } of FILTER_PREFERENCES) {
+        if (defaults[defaultField] !== undefined) { fields.push(`${defaultField}=?`); args.push(defaults[defaultField] ? 1 : 0); }
+    }
     if (passwordHash !== undefined) { fields.push('passwordHash=?'); args.push(passwordHash); }
 
     args.push(userId);
@@ -278,8 +283,8 @@ function releasesAdd(release) {
     release.createdAt = release.createdAt || 0;
     release.sha = release.sha || '';
 
-    db.prepare('INSERT OR IGNORE INTO releases (id, projectId, version, body, notified, prerelease, createdAt, sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(release.id, release.projectId, release.version, release.body, release.notified ? 1 : 0, release.prerelease ? 1 : 0, release.createdAt, release.sha);
+    db.prepare('INSERT OR IGNORE INTO releases (id, projectId, version, body, notified, prerelease, updated, createdAt, sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(release.id, release.projectId, release.version, release.body, release.notified ? 1 : 0, release.prerelease ? 1 : 0, release.updated ? 1 : 0, release.createdAt, release.sha);
 
     return release;
 }
@@ -288,7 +293,7 @@ function releasesUpdate(releaseId, data) {
     assert.strictEqual(typeof releaseId, 'string');
     assert.strictEqual(typeof data, 'object');
 
-    const allowedFields = new Set(['notified', 'sha', 'prerelease', 'body', 'createdAt']);
+    const allowedFields = new Set(['notified', 'sha', 'prerelease', 'updated', 'body', 'createdAt']);
     const { sets, args } = buildSetClause(data, allowedFields);
 
     if (sets.length === 0) return;

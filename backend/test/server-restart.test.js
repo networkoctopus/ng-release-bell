@@ -77,21 +77,29 @@ for (const upgrade of [false, true]) {
             assert.equal(old.inheritReleaseFiltering, false);
             assert.equal(old.excludePrereleases, true);
         }
-        assert.equal((await request('profile', { defaultExcludePrereleases: true })).status, 202);
+        assert.equal((await request('profile', { defaultExcludePrereleases: true, defaultExcludeUpdated: true, defaultLatestVersionOnly: true })).status, 202);
         // website is an existing accepted project type with no provider adapter:
         // it exercises persistence/API paths without any external provider calls.
         const created = await request('projects', { name: 'new/project', type: 'website' });
         assert.equal(created.status, 201);
         assert.equal(created.body.project.effectiveExcludePrereleases, true);
+        assert.equal(created.body.project.inheritExcludeUpdated, true);
+        assert.equal(created.body.project.effectiveExcludeUpdated, true);
+        assert.equal(created.body.project.inheritLatestVersionOnly, true);
+        assert.equal(created.body.project.effectiveLatestVersionOnly, true);
         await stop();
         await start();
         const profile = await request('profile');
         assert.equal(profile.status, 200, 'saved session remains valid');
         assert.equal(!!profile.body.user.defaultExcludePrereleases, true);
+        assert.equal(!!profile.body.user.defaultExcludeUpdated, true);
+        assert.equal(!!profile.body.user.defaultLatestVersionOnly, true);
         const projects = (await request('projects')).body.projects;
         assert.equal(projects.find(p => p.name === 'new/project').inheritReleaseFiltering, true);
         const exported = (await request('data/export')).body;
         assert.equal(exported.settings.defaultExcludePrereleases, true);
+        assert.equal(exported.settings.defaultExcludeUpdated, true);
+        assert.equal(exported.settings.defaultLatestVersionOnly, true);
         if (upgrade) {
             const copy = new DatabaseSync(dbPath, { readOnly: true });
             assert.equal(copy.prepare('SELECT count(*) AS n FROM releases WHERE id=\'history\' AND notified=1').get().n, 1);

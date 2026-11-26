@@ -46,10 +46,10 @@ async function scenario(upgrade) {
                 const fs = require('node:fs');
                 const { DatabaseSync } = require('node:sqlite');
                 const db = new DatabaseSync(process.env.DB_PATH);
-                const schema = fs.readFileSync('/app/backend/schema.sql', 'utf8')
+                const schema = fs.readFileSync('/app/backend/test/fixtures/schema-v2.sql', 'utf8')
                     .replace(/,\\n    defaultExcludePrereleases INTEGER NOT NULL DEFAULT 0/, '')
                     .replace(/    inheritReleaseFiltering INTEGER NOT NULL DEFAULT 0,\\n/, '');
-                db.exec(schema);
+                db.exec(${upgrade === 'global-v2' ? 'fs.readFileSync(\'/app/backend/test/fixtures/schema-v2.sql\', \'utf8\')' : 'schema'});
                 db.exec("INSERT INTO users (id,email) VALUES ('legacy','test@example.invalid')");
                 db.exec("INSERT INTO projects (id,userId,name,type,excludePrereleases) VALUES ('old','legacy','old/project','website',1)");
                 db.exec("INSERT INTO releases (id,projectId,version,notified) VALUES ('history','old','1.0.0',1)");
@@ -63,29 +63,39 @@ async function scenario(upgrade) {
         assert.equal(login.status, 200);
         cookie = login.cookie.split(';')[0];
         const profile = await api('/api/v1/profile');
+        assert.equal(!!profile.body.user.defaultExcludeUpdated, false);
+        assert.equal(!!profile.body.user.defaultLatestVersionOnly, false);
         assert.equal(!!profile.body.user.defaultExcludePrereleases, false);
         if (upgrade) {
             const projects = (await api('/api/v1/projects')).body.projects;
             assert.equal(projects[0].excludePrereleases, true);
             assert.equal(projects[0].inheritReleaseFiltering, false);
+            assert.equal(projects[0].inheritExcludeUpdated, false);
+            assert.equal(projects[0].inheritLatestVersionOnly, false);
         }
-        assert.equal((await api('/api/v1/profile', { defaultExcludePrereleases: true })).status, 202);
+        assert.equal((await api('/api/v1/profile', { defaultExcludePrereleases: true, defaultExcludeUpdated: true, defaultLatestVersionOnly: true })).status, 202);
         const created = await api('/api/v1/projects', { type: 'website', name: 'new/project' });
         assert.equal(created.status, 201);
         assert.equal(created.body.project.inheritReleaseFiltering, true);
         assert.equal(created.body.project.effectiveExcludePrereleases, true);
+        assert.equal(created.body.project.inheritExcludeUpdated, true);
+        assert.equal(created.body.project.effectiveExcludeUpdated, true);
+        assert.equal(created.body.project.inheritLatestVersionOnly, true);
+        assert.equal(created.body.project.effectiveLatestVersionOnly, true);
         docker('restart', container);
         await healthy();
         // The session secret and database both survive restart.
         assert.equal((await api('/api/v1/profile')).status, 200);
         const exported = (await api('/api/v1/data/export')).body;
         assert.equal(exported.settings.defaultExcludePrereleases, true);
+        assert.equal(exported.settings.defaultExcludeUpdated, true);
+        assert.equal(exported.settings.defaultLatestVersionOnly, true);
         assert.equal(exported.projects.find(p => p.name === 'new/project').inheritReleaseFiltering, true);
         if (upgrade) {
             const count = docker('exec', container, '/nodejs/bin/node', '-e', 'const {DatabaseSync}=require(\'node:sqlite\'); const db=new DatabaseSync(process.env.DB_PATH); console.log(db.prepare("SELECT count(*) AS n FROM releases WHERE id=\'history\' AND notified=1").get().n); db.close()');
             assert.equal(count, '1');
         }
-        console.log(`${upgrade ? 'SQLite upgrade' : 'Fresh install'} + restart smoke test passed`);
+        console.log(`${upgrade === 'global-v2' ? 'Previous global-filtering upgrade' : upgrade ? 'SQLite upgrade' : 'Fresh install'} + restart smoke test passed`);
     } catch (error) {
         try { console.error(docker('logs', container)); } catch { /* may not exist yet */ }
         throw error;
@@ -98,4 +108,5 @@ async function scenario(upgrade) {
 (async () => {
     await scenario(false);
     await scenario(true);
+    await scenario('global-v2');
 })().catch(error => { console.error(error); process.exitCode = 1; });

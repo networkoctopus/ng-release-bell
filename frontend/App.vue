@@ -84,13 +84,15 @@
               <Dropdown v-model="editProjectDialog.releaseFiltering" :options="projectReleaseFilteringOptions" optionLabel="label" optionValue="value" inputId="releaseFilteringInput"/>
               <small v-if="editProjectDialog.releaseFiltering === 'inherit'">Currently: {{ user && user.defaultExcludePrereleases ? 'Stable releases only' : 'All releases, including prereleases' }}</small>
             </div>
-            <div class="form-field form-checkbox-field">
-              <Checkbox v-model="editProjectDialog.excludeUpdated" :binary="true" inputId="excludeUpdated"/>
-              <label for="excludeUpdated" class="checkbox-label">Exclude updated/overridden releases from notifications</label>
+            <div class="form-field">
+              <label for="excludeUpdated">Exclude updated/overridden releases from notifications</label>
+              <Dropdown v-model="editProjectDialog.excludeUpdated" :options="booleanFilteringOptions" optionLabel="label" optionValue="value" inputId="excludeUpdated"/>
+              <small v-if="editProjectDialog.excludeUpdated === 'inherit'">Currently: {{ user && user.defaultExcludeUpdated ? 'Yes' : 'No' }}</small>
             </div>
-            <div class="form-field form-checkbox-field">
-              <Checkbox v-model="editProjectDialog.latestVersionOnly" :binary="true" inputId="latestVersionOnly"/>
-              <label for="latestVersionOnly" class="checkbox-label">Include latest version only</label>
+            <div class="form-field">
+              <label for="latestVersionOnly">Include latest version only</label>
+              <Dropdown v-model="editProjectDialog.latestVersionOnly" :options="booleanFilteringOptions" optionLabel="label" optionValue="value" inputId="latestVersionOnly"/>
+              <small v-if="editProjectDialog.latestVersionOnly === 'inherit'">Currently: {{ user && user.defaultLatestVersionOnly ? 'Yes' : 'No' }}</small>
             </div>
             <div class="info-note">
               <i class="pi pi-info-circle" style="color: var(--text-color-secondary, #999); margin-right: 4px;"></i>
@@ -181,10 +183,18 @@
               <small>Applies to new projects and projects that inherit the global setting. Providers without prerelease detection keep their existing behaviour.</small>
             </div>
             <div class="form-field form-checkbox-field">
-              <Checkbox v-model="settingsDialog.makeProjectsInherit" :binary="true" inputId="makeProjectsInherit"/>
-              <label for="makeProjectsInherit" class="checkbox-label">Make all existing projects inherit when saving</label>
+              <Checkbox v-model="settingsDialog.defaultExcludeUpdated" :binary="true" inputId="defaultExcludeUpdated"/>
+              <label for="defaultExcludeUpdated" class="checkbox-label">Exclude updated/overridden releases from notifications</label>
             </div>
-            <div class="info-note"><small>This replaces every project’s explicit release filtering choice with inheritance. Other filters and notification settings are kept.</small></div>
+            <div class="form-field form-checkbox-field">
+              <Checkbox v-model="settingsDialog.defaultLatestVersionOnly" :binary="true" inputId="defaultLatestVersionOnly"/>
+              <label for="defaultLatestVersionOnly" class="checkbox-label">Include latest version only</label>
+            </div>
+            <div class="form-field form-checkbox-field">
+              <Checkbox v-model="settingsDialog.makeProjectsInherit" :binary="true" inputId="makeProjectsInherit"/>
+              <label for="makeProjectsInherit" class="checkbox-label">Make all existing projects inherit all three defaults when saving</label>
+            </div>
+            <div class="info-note"><small>This replaces every project’s explicit prerelease, updated-release and latest-version choices with inheritance. Regex filters and notification frequencies are kept.</small></div>
             <div class="form-field">
               <label for="quayTokenInput">Quay Token</label>
               <InputText id="quayTokenInput" type="password" v-model="settingsDialog.quayToken" :class="{ 'p-invalid': settingsDialog.error }"/>
@@ -340,6 +350,11 @@ export default {
         { label: 'Stable releases only', value: 'stable' },
         { label: 'All releases, including prereleases', value: 'all' },
       ],
+      booleanFilteringOptions: [
+        { label: 'Inherit global setting', value: 'inherit' },
+        { label: 'Yes', value: true },
+        { label: 'No', value: false },
+      ],
       emailFrequencyOptions: [
         { label: 'Instant emails', value: 'instant' },
         { label: 'Hourly emails', value: 'hourly' },
@@ -367,14 +382,16 @@ export default {
         error: '',
         emailFrequency: 'instant',
         releaseFiltering: 'inherit',
-        excludeUpdated: false,
-        latestVersionOnly: false,
+        excludeUpdated: 'inherit',
+        latestVersionOnly: 'inherit',
         versionFilters: [],
         releases: [],
         syncBusy: false,
       },
       settingsDialog: {
         defaultExcludePrereleases: false,
+        defaultExcludeUpdated: false,
+        defaultLatestVersionOnly: false,
         makeProjectsInherit: false,
         visible: false,
         busy: false,
@@ -430,7 +447,10 @@ export default {
       const filters = this.editProjectDialog.versionFilters;
       const excludePrereleases = this.editProjectDialog.releaseFiltering === 'inherit'
         ? !!(this.user && this.user.defaultExcludePrereleases) : this.editProjectDialog.releaseFiltering === 'stable';
-      const latestVersionOnly = this.editProjectDialog.latestVersionOnly;
+      const latestVersionOnly = this.editProjectDialog.latestVersionOnly === 'inherit'
+        ? !!(this.user && this.user.defaultLatestVersionOnly) : this.editProjectDialog.latestVersionOnly;
+      const excludeUpdated = this.editProjectDialog.excludeUpdated === 'inherit'
+        ? !!(this.user && this.user.defaultExcludeUpdated) : this.editProjectDialog.excludeUpdated;
       const hasFilters = filters && filters.some(f => f.value && f.value.trim());
       const includes = filters ? filters.filter(f => f.inverse === true && f.value && f.value.trim()) : [];
       const excludes = filters ? filters.filter(f => f.inverse === false && f.value && f.value.trim()) : [];
@@ -490,7 +510,7 @@ export default {
         }
       }
 
-      return prelim;
+      return prelim.map(release => ({ ...release, _excluded: release._excluded || !!(excludeUpdated && release.updated) }));
     },
   },
   methods: {
@@ -653,8 +673,8 @@ export default {
       this.editProjectDialog.origin = project.origin || '';
       this.editProjectDialog.emailFrequency = project.emailFrequency || 'instant';
       this.editProjectDialog.releaseFiltering = project.inheritReleaseFiltering ? 'inherit' : (project.excludePrereleases ? 'stable' : 'all');
-      this.editProjectDialog.excludeUpdated = !!project.excludeUpdated;
-      this.editProjectDialog.latestVersionOnly = !!project.latestVersionOnly;
+      this.editProjectDialog.excludeUpdated = project.inheritExcludeUpdated ? 'inherit' : !!project.excludeUpdated;
+      this.editProjectDialog.latestVersionOnly = project.inheritLatestVersionOnly ? 'inherit' : !!project.latestVersionOnly;
       this.editProjectDialog.versionFilters = project.versionFilters ? (typeof project.versionFilters === 'string' ? JSON.parse(project.versionFilters) : project.versionFilters) : [];
       this.editProjectDialog.releases = [];
       this.editProjectDialog.error = '';
@@ -688,8 +708,10 @@ export default {
         emailFrequency: this.editProjectDialog.emailFrequency,
         inheritReleaseFiltering: this.editProjectDialog.releaseFiltering === 'inherit',
         excludePrereleases: this.editProjectDialog.releaseFiltering === 'stable',
-        excludeUpdated: this.editProjectDialog.excludeUpdated,
-        latestVersionOnly: this.editProjectDialog.latestVersionOnly,
+        inheritExcludeUpdated: this.editProjectDialog.excludeUpdated === 'inherit',
+        excludeUpdated: this.editProjectDialog.excludeUpdated === true,
+        inheritLatestVersionOnly: this.editProjectDialog.latestVersionOnly === 'inherit',
+        latestVersionOnly: this.editProjectDialog.latestVersionOnly === true,
         versionFilters: JSON.stringify(this.editProjectDialog.versionFilters),
       };
 
@@ -735,6 +757,8 @@ export default {
     },
     onShowSettingsDialog() {
       this.settingsDialog.defaultExcludePrereleases = !!this.user.defaultExcludePrereleases;
+      this.settingsDialog.defaultExcludeUpdated = !!this.user.defaultExcludeUpdated;
+      this.settingsDialog.defaultLatestVersionOnly = !!this.user.defaultLatestVersionOnly;
       this.settingsDialog.makeProjectsInherit = false;
       this.settingsDialog.email = this.user.email || '';
       this.settingsDialog.githubToken = this.user.githubToken || '';
@@ -800,6 +824,8 @@ export default {
       try {
         const body = {
           defaultExcludePrereleases: this.settingsDialog.defaultExcludePrereleases,
+          defaultExcludeUpdated: this.settingsDialog.defaultExcludeUpdated,
+          defaultLatestVersionOnly: this.settingsDialog.defaultLatestVersionOnly,
           makeProjectsInherit: this.settingsDialog.makeProjectsInherit,
         };
         if (this.settingsDialog.githubToken !== (this.user.githubToken || '')) {
