@@ -47,18 +47,50 @@ sender. The feature branch restores that sender using the existing template and
 retains scheduling intervals. `just` is unavailable locally; its build step was
 run directly through npm.
 
-Pending environment-dependent checks:
+Local Docker verification (Colima on Apple Silicon):
 
-- Docker is not installed/available here. The new container smoke script and
-  four-architecture build workflow are prepared but have not executed. Actual
-  container fresh install, migration and restart results must be recorded after
-  an approved local/CI run. The test script has passed syntax and lint checks.
+- Confirmed the `colima` context resolves to a local Unix socket. Every Docker
+  operation was pinned to this context/socket; no remote production Docker host
+  was contacted. Sandbox socket access required escalation and was granted.
+- Docker client 29.10.1, engine 29.5.2 (Linux ARM64), Compose 5.8.0, Buildx 0.39.1,
+  BuildKit 0.30.0, Colima 0.10.3; VM resources: four CPUs and 8 GiB memory.
+- ARM64 Node execution, unchanged-Dockerfile application build, all 46 regression
+  tests in a Linux ARM64 build-stage container, and runtime fresh-install,
+  old-SQLite-upgrade, login/settings/history/session persistence and restart smoke
+  tests all pass.
+- AMD64 Node starts under Rosetta, but an arithmetic reproduction returned zero
+  for `Math.floor(heap_size_limit * 0.25)` and npm failed constructing its cache.
+  Switching to the existing QEMU handler produced the expected positive result.
+  With QEMU, the unchanged Dockerfile builds for AMD64, all 46 Linux AMD64 tests
+  pass, and both runtime fresh-install and SQLite-upgrade/restart smoke tests pass.
+- The test Compose file passed config validation and startup/health/restart
+  checks. A temporary copy used a unique container/volume name and network mode
+  `none`. Verified a read-only root filesystem and nonroot UID 65532. All owned
+  disposable test containers and volumes were removed afterward.
+- Full tests also pass again on the Mac, and backend/test/script/changed-migration
+  ESLint checks pass. No application code, dependencies or Dockerfile changes
+  were needed.
+- Local versioned runtime images are retained as
+  `ng-release-bell:test-colima-9ac7f4f-arm64` and
+  `ng-release-bell:test-colima-9ac7f4f-amd64`. They contain source commit `9ac7f4f`.
+  Cached build-stage images have the same names with a `-checks` suffix.
+- At the user's request, keep QEMU/binfmt enabled and Rosetta disabled in local
+  Colima. Native ARM64 remains the normal fast development path; AMD64 uses
+  emulation. The settings survived a full local Colima stop/start; Buildx then
+  advertised `linux/amd64` and `linux/amd64/v2`. Both runtime images executed again
+  afterward; AMD64 arithmetic and SQLite checks passed as nonroot UID 65532.
+  CPU/memory settings remained four CPUs and 8 GiB. See the Apple Silicon section
+  in `docs/docker-testing.md`.
+
+Remaining checks:
+
 - No Browser connection is available. The Vue file parses and builds, and its
   editor/preview logic is covered by tests; visual review and screenshots remain.
 - No real GitHub account or production data was used for import tests. A test
   account can be used in the isolated Docker instance for a final provider check.
-- No branch was pushed, workflow triggered, image published, release created,
-  pull request submitted, or production deployment performed.
+- The user has pushed the contribution branches. This verification did not
+  trigger a workflow, push an image, create a release, submit a pull request,
+  or deploy to production.
 
 The test workflow passes actionlint 1.7.12 (shellcheck/pyflakes disabled), and
 the test workflow and Compose YAML files parse successfully. Its action refs are
@@ -66,3 +98,13 @@ pinned to commits resolved from the official repositories. Both existing base
 image manifests were checked: Linux amd64, arm64, ppc64le and s390x are present.
 Upstream does not declare its own architecture matrix, and no readable public
 upstream application image manifest was found at the checked registry names.
+
+The local image builds and test containers had no SMTP credentials. Smoke and
+regression containers ran with network access disabled; provider and email
+regressions use mocks. Build-time package/base-image downloads used public
+registries. Published multiarchitecture manifests and ppc64le/s390x execution
+remain untested; local application execution was verified for ARM64 and AMD64.
+
+Build-time npm audit output for the unchanged production dependency set reported
+11 advisories (one moderate, eight high, two critical). Dependency upgrades were
+not performed as part of this test run.

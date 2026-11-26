@@ -148,3 +148,29 @@ SQLite integrity, settings and release counts before starting. Retain the failed
 upgrade volume for investigation. Do not run an older image against the upgraded
 database or delete migration records to simulate rollback. Restore database and
 session secret together; sessions created after the backup may require login.
+
+## Apple Silicon with local Colima
+
+Use an explicit local context so these commands never select a remote Docker
+host from the surrounding environment:
+
+```sh
+docker context inspect colima
+docker --context colima version
+docker --context colima compose version
+docker --context colima buildx version
+docker --context colima buildx build --builder colima --platform linux/arm64 --load -t ng-release-bell:test-local-arm64 .
+DOCKER_CONTEXT=colima DOCKER_HOST="unix://$HOME/.colima/default/docker.sock" node scripts/test-container.cjs ng-release-bell:test-local-arm64
+```
+
+The checked endpoint must be a local Unix socket. On this Mac, Node 26 AMD64
+containers started under Rosetta but produced an incorrect floating-point result,
+causing npm's PackumentCache construction to fail. QEMU AMD64 emulation corrected
+the result and allowed the unchanged Dockerfile to build. Keep native ARM64 for
+normal development; QEMU is slower but provides a working AMD64 test path here.
+
+The retained local Colima configuration uses `rosetta: false` and `binfmt: true`.
+Those correspond to `colima start --vz-rosetta=false --binfmt` after stopping the
+local VM. Stop/restart only after checking for other local workloads. This is a
+local machine configuration, not an application requirement or a production
+Dockerfile change.
