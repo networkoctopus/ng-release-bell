@@ -6,8 +6,8 @@ npm lockfile. No dependency versions or production data were changed.
 | Branch | Result |
 | --- | --- |
 | `fix/starred-repository-duplicates` | 30 tests pass; production build passes; changed API/database/test/migration files pass ESLint |
-| `feat/global-release-filtering` | 43 tests pass; production build passes; backend/tests and changed migrations pass ESLint |
-| `test/combined-release-filtering` | 46 tests pass, including real HTTP fresh-install, old-SQLite-upgrade and restart tests; production build and backend/test/script/changed-migration lint pass |
+| `feat/global-release-filtering` | 51 tests pass; production build passes; backend/tests and changed migrations pass ESLint |
+| `test/combined-release-filtering` | 52 tests pass, including real HTTP fresh-install, old-SQLite-upgrade and restart tests; production build and backend/test/script/changed-migration lint pass |
 
 The duplicate regression was also run against the original Vue editor. It fails
 because the editor submits `github_manual` instead of `github`. The fixed editor
@@ -34,7 +34,7 @@ Commands run on the combined branch:
 npm ci --no-audit --no-fund
 npm test
 npm run build
-npx --no-install eslint backend index.js scripts/test-container.cjs migrations/20260724180000-add-latest-version-only.js migrations/20261126190000-add-global-release-filtering.js
+npx --no-install eslint backend index.js scripts/test-container.cjs migrations/20260724180000-add-latest-version-only.js migrations/20261126190000-add-global-release-filtering.js migrations/20261126200000-add-global-notification-filters.js
 npx --no-install eslint --no-eslintrc --parser vue-eslint-parser --parser-options '{"ecmaVersion":2022,"sourceType":"module"}' frontend/App.vue
 git diff --check
 ```
@@ -108,3 +108,46 @@ remain untested; local application execution was verified for ARM64 and AMD64.
 Build-time npm audit output for the unchanged production dependency set reported
 11 advisories (one moderate, eight high, two critical). Dependency upgrades were
 not performed as part of this test run.
+
+## Additional global defaults: updated releases and latest version
+
+Source commit `a13650a` extends independent inheritance to `excludeUpdated` and
+`latestVersionOnly`. Its application files are identical after merging the
+independent feature branch back into the combined test branch. Existing raw
+booleans and prerelease inheritance survive upgrade; new projects inherit all
+three defaults. Version 3 export/import preserves every independent preference,
+while version 1/2 imports keep their explicit updated/latest settings.
+
+Validation completed on local Colima only:
+
+| Check | Result |
+| --- | --- |
+| Combined Mac regression suite | 52 passed |
+| Linux ARM64 Dockerfile build and full regression suite | Build passed; 52 tests passed |
+| Linux AMD64 Dockerfile build and full regression suite | Build passed; 52 tests passed |
+| ARM64 runtime smoke tests | Fresh install, legacy upgrade, previous global-filtering upgrade, settings/session/history and restart passed |
+| AMD64 runtime smoke tests | Fresh install, legacy upgrade, previous global-filtering upgrade, settings/session/history and restart passed |
+| Independent feature branch | 51 tests, production build and backend/test/script/migration lint passed |
+| Vue parsing and combined production build | Passed |
+| Image workflow validation | actionlint passed |
+
+The update detector now admits changed SHAs for known versions, fixing an
+unreachable check. It refreshes the existing row without replacing its ID and
+records whether the event is an update, so pending notification dispatch can
+apply the current global/per-project preference. Tests verify exclusion and
+inclusion, explicit overrides, repeated sync, preference changes without history
+replay, and stable promotion even when the SHA changes. Latest-version tests
+cover global changes, regex and prerelease eligibility, list display, preview,
+and queued notifications. The upgrade fixture is the schema shipped before this
+extension, rather than a fresh-schema approximation.
+
+Local runtime images are retained as:
+
+- `ng-release-bell:test-global-filters-a13650a-arm64`
+- `ng-release-bell:test-global-filters-a13650a-amd64`
+
+The corresponding `-checks` build-stage images are also retained. All owned
+UUID-named smoke containers/volumes were removed. SMTP and provider regression
+transports were mocked, and test containers ran without network access. No
+remote production Docker host was accessed; no running deployment was changed.
+Visual screenshots still require a Browser connection.
