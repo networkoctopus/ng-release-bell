@@ -61,7 +61,7 @@
           <div>
             <div class="form-field">
               <label for="editProjectTypeInput">Type</label>
-              <Dropdown v-model="editProjectDialog.type" :options="availableProjectTypes" optionLabel="name" optionDisabled="disabled" inputId="editProjectTypeInput"/>
+              <Dropdown v-model="editProjectDialog.type" :options="editProjectDialog.type.type === 'github' ? [editProjectDialog.type] : availableProjectTypes" :disabled="editProjectDialog.type.type === 'github'" optionLabel="name" optionDisabled="disabled" inputId="editProjectTypeInput"/>
             </div>
             <div class="form-field">
               <label for="editProjectNameInput">Name</label>
@@ -648,7 +648,7 @@ export default {
     async onShowEditProjectDialog(project) {
       const match = this.availableProjectTypes.find(t => t.type === project.type);
       this.editProjectDialog.id = project.id;
-      this.editProjectDialog.type = match || this.availableProjectTypes[0];
+      this.editProjectDialog.type = match || { type: project.type, name: project.type === 'github' ? 'Github (starred)' : project.type };
       this.editProjectDialog.name = project.name;
       this.editProjectDialog.origin = project.origin || '';
       this.editProjectDialog.emailFrequency = project.emailFrequency || 'instant';

@@ -167,8 +167,12 @@ async function syncGithubStarredByUser(user) {
 
     const trackedProjects = await database.projects.listByType(user.id, database.PROJECT_TYPE_GITHUB);
 
-    const newProjects = starredProjects.filter(function (a) { return !trackedProjects.find(function (b) { return a.name === b.name; }); });
-    const outdatedProjects = trackedProjects.filter(function (a) { return !starredProjects.find(function (b) { return a.name === b.name; }); });
+    // A manually tracked repository also satisfies the subscription. Keep its
+    // ownership manual so unstarring it never removes it or its history.
+    const manualProjects = await database.projects.listByType(user.id, database.PROJECT_TYPE_GITHUB_MANUAL);
+    const existingProjects = trackedProjects.concat(manualProjects);
+    const newProjects = starredProjects.filter(function (a) { return !existingProjects.find(function (b) { return a.name.toLowerCase() === b.name.toLowerCase(); }); });
+    const outdatedProjects = trackedProjects.filter(function (a) { return !starredProjects.find(function (b) { return a.name.toLowerCase() === b.name.toLowerCase(); }); });
 
     debug(`syncGithubStarredByUser: new projects: ${newProjects.length} outdated projects: ${outdatedProjects.length}`);
 

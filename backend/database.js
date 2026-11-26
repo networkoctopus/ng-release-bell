@@ -160,6 +160,14 @@ function projectsListByType(userId, type) {
 function projectsAdd(project) {
     assert.strictEqual(typeof project, 'object');
 
+    // Synchronous lookup + insert prevents overlapping syncs from importing the
+    // same subscription twice, without modifying existing duplicate user data.
+    if (project.type === exports.PROJECT_TYPE_GITHUB) {
+        const existing = db.prepare('SELECT * FROM projects WHERE userId=? AND type IN (?, ?) AND name = ? COLLATE NOCASE')
+            .get(project.userId, exports.PROJECT_TYPE_GITHUB, exports.PROJECT_TYPE_GITHUB_MANUAL, project.name);
+        if (existing) return projectPostprocess(existing);
+    }
+
     project.id = uuid.v4();
     project.enabled = project.enabled !== undefined ? !!project.enabled : true;
     project.lastSuccessfulSyncAt = 0;
