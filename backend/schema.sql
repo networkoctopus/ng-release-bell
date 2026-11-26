@@ -4,7 +4,9 @@ CREATE TABLE IF NOT EXISTS users (
     githubToken TEXT NOT NULL DEFAULT '',
     quayToken TEXT NOT NULL DEFAULT '',
     githubAutoImport INTEGER NOT NULL DEFAULT 0,
-    defaultExcludePrereleases INTEGER NOT NULL DEFAULT 0
+    defaultExcludePrereleases INTEGER NOT NULL DEFAULT 0,
+    defaultExcludeUpdated INTEGER NOT NULL DEFAULT 0,
+    defaultLatestVersionOnly INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -19,7 +21,9 @@ CREATE TABLE IF NOT EXISTS projects (
     excludePrereleases INTEGER NOT NULL DEFAULT 0,
     inheritReleaseFiltering INTEGER NOT NULL DEFAULT 0,
     excludeUpdated INTEGER NOT NULL DEFAULT 0,
+    inheritExcludeUpdated INTEGER NOT NULL DEFAULT 0,
     latestVersionOnly INTEGER NOT NULL DEFAULT 0,
+    inheritLatestVersionOnly INTEGER NOT NULL DEFAULT 0,
     versionFilters TEXT,
     lastNotifiedAt INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (userId) REFERENCES users(id)
@@ -32,6 +36,7 @@ CREATE TABLE IF NOT EXISTS releases (
     body TEXT,
     notified INTEGER NOT NULL DEFAULT 0,
     prerelease INTEGER NOT NULL DEFAULT 0,
+    updated INTEGER NOT NULL DEFAULT 0,
     createdAt INTEGER NOT NULL DEFAULT 0,
     sha TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (projectId) REFERENCES projects(id)

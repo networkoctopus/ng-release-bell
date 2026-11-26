@@ -1,35 +1,40 @@
-Add global release filtering with per-project inheritance
+Add global release filtering with independent project overrides
 
-Automatically imported starred repositories and new manual projects now inherit a
-user's default release filtering preference. Settings offers stable-only or all
-releases; project editing offers inheritance or either explicit override and
-shows the current inherited behaviour. Existing projects retain their explicit
-stored preference. An unchecked, explicit Settings action makes existing projects
-inherit when saving.
+New starred imports and manual projects inherit three per-user defaults:
+prerelease filtering, updated/overridden-release exclusion, and latest-version-only
+filtering. Each project can independently inherit or override each preference;
+the editor shows the current inherited choice. Existing stored preferences remain
+explicit on upgrade. An unchecked Settings action lets the user make all current
+projects inherit all three defaults when saving.
 
-The existing `excludePrereleases` filtering is reused for ingestion, project
-listing, preview, and queued notifications. Stable eligibility is determined
-before latest-version selection. Previously tracked prereleases are refreshed so
-promotion of the same tag to stable can notify once. Changing preferences never
-resets historical notification flags. Regex filters, notification intervals, and
-providers without prerelease detection retain their behaviour.
+A shared preference mapping resolves the existing boolean filtering mechanisms
+for ingestion, listing, preview and queued notifications. Stable eligibility is
+applied before highest-semver selection. Changing defaults does not reset old
+notification flags. Existing regex, enabled state and notification intervals stay
+independent. Known prereleases are refreshed to detect stable promotion once.
 
-An idempotent migration adds `users.defaultExcludePrereleases` and
-`projects.inheritReleaseFiltering`, both defaulting to zero for existing data.
-The project creation path opts new projects into inheritance. Export version 2
-includes the global preference and inheritance flag; version 1 imports remain
-explicit and do not change the global default. Imports also preserve disabled
-projects. Legacy API updates containing only `excludePrereleases` remain explicit.
+The previous updated-release check was unreachable because known versions were
+removed before SHA comparison. Changed SHAs are now processed in place, preserving
+release IDs and preventing repeat notifications for the same SHA. A persisted
+`updated` marker lets queued notifications respect preference changes too. Stable
+promotion remains distinct from an overridden release, including a changed SHA.
 
-Two existing defects surfaced during validation: the latest-version migration
-unconditionally added a column already present in fresh schemas, and daily/weekly
-notifications called an undefined digest sender. A column-existence guard and a
-sender using the existing digest template allow fresh-install and scheduling
-regression coverage. Scheduling intervals remain unchanged.
+Additive guarded migrations retain existing booleans and prerelease inheritance.
+New project creation opts into each default independently. Version 3 exports retain
+all defaults/flags, while version 1/2 imports preserve their explicit preferences.
+Legacy boolean-only API updates remain explicit overrides for that setting.
 
-Validation: all 43 tests pass on Node 26; the Vite production build passes.
-Backend, test, and changed-migration ESLint checks pass. Tests use temporary SQLite
-databases and mocked provider/email transports; no real notifications are sent. UI screenshots could
-not be captured because no Browser connection is available in this environment.
+Earlier validation also fixed two prerequisites: a latest-version migration that
+re-added an existing fresh-schema column, and daily/weekly notifications calling
+an undefined digest sender. The guard and existing digest template preserve
+scheduling intervals.
+
+Regression coverage includes inheritance and overrides in both directions,
+changing settings after import, same-tag SHA updates, stable promotion, queued
+filtering without historical replay, regex/latest-version interaction, old schema
+upgrades and process/container restarts, import/export and supported providers.
+Tests use disposable data and mocked provider/email transports. See
+`docs/verification.md` for current results. Visual review/screenshots remain pending
+because this environment has no Browser connection.
 
 Closes #7.
