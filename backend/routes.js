@@ -321,6 +321,11 @@ async function projectsUpdate(req, res, next) {
     }
 
     try {
+        const project = await database.projects.get(req.params.projectId);
+        if (project.userId !== req.user.id) return next(new HttpError(404, 'project not found'));
+        if (project.type === database.PROJECT_TYPE_GITHUB && req.body.type !== undefined && req.body.type !== project.type) {
+            return next(new HttpError(400, 'Starred projects must retain their GitHub type'));
+        }
         await database.projects.update(req.params.projectId, req.body);
     } catch (error) {
         return next(new HttpError(500, error));
