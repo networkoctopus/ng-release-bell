@@ -33,8 +33,11 @@ Regression coverage includes inheritance and overrides in both directions,
 changing settings after import, same-tag SHA updates, stable promotion, queued
 filtering without historical replay, regex/latest-version interaction, old schema
 upgrades and process/container restarts, import/export and supported providers.
-Tests use disposable data and mocked provider/email transports. See
-`docs/verification.md` for current results. Visual review/screenshots remain pending
-because this environment has no Browser connection.
+Tests use disposable data and mocked provider/email transports. This independent
+branch passes 51 tests, production build and backend/test/script/migration lint.
+Combined integration passes 52 tests on ARM64 and AMD64, plus fresh-install,
+legacy/current SQLite upgrade and container restart smoke tests on both.
+Visual review/screenshots remain pending because there is no Browser connection.
+
 
 Closes #7.
